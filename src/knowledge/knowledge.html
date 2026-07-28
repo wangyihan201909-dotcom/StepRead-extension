@@ -8,71 +8,175 @@
   </head>
   <body>
     <main class="knowledge-shell">
-      <header class="page-header">
-        <div>
-          <p class="eyebrow">StepRead</p>
-          <h1>知识图谱</h1>
-          <p id="documentTitle" class="document-title">正在读取文档...</p>
-        </div>
-        <button id="reloadButton" type="button" class="secondary">读取最新记录</button>
-      </header>
-
-      <section class="prompt-section" aria-labelledby="promptTitle">
-        <div class="section-heading">
-          <div>
-            <h2 id="promptTitle">知识图谱 prompt</h2>
-            <p>这里写本次生成想重点整理的方向；每次知识图谱都可以在上一次基础上修改 prompt 后重新生成。</p>
+      <section id="summaryPanel" class="summary-panel" data-collapsed="false" aria-labelledby="documentTitle">
+        <header class="summary-bar">
+          <div class="summary-heading">
+            <p class="eyebrow">StepRead 知识图谱</p>
+            <h1 id="documentTitle">正在读取文档...</h1>
+            <p id="summaryMeta" class="summary-meta">摘要是这张图谱的文字版总览。</p>
           </div>
-          <button id="generateButton" type="button">生成知识图谱</button>
-        </div>
-        <textarea
-          id="userPrompt"
-          rows="5"
-          placeholder="请重点总结我目前已经理解的核心概念、概念之间的推理关系、仍不稳定的地方，以及下一步学习路径。"
-        ></textarea>
-      </section>
-
-      <section class="summary-strip" aria-label="阅读记录统计">
-        <div>
-          <span id="highlightCount">0</span>
-          <small>历史划线</small>
-        </div>
-        <div>
-          <span id="threadCount">0</span>
-          <small>问答线程</small>
-        </div>
-        <div>
-          <span id="messageCount">0</span>
-          <small>问答对话消息</small>
-        </div>
-        <div>
-          <span id="summaryCount">0</span>
-          <small>问答摘要</small>
-        </div>
-      </section>
-
-      <section class="report-section" aria-labelledby="reportTitle">
-        <div class="section-heading">
-          <div>
-            <h2 id="reportTitle">知识图谱正文</h2>
-            <p id="status" role="status">等待读取知识图谱。</p>
+          <div class="summary-actions">
+            <button id="regenerateButton" type="button">重新生成摘要</button>
+            <button
+              id="summaryToggle"
+              type="button"
+              class="icon-button summary-toggle"
+              aria-expanded="true"
+              aria-controls="summaryBody"
+              title="收起摘要"
+            >
+              <span aria-hidden="true">⌃</span>
+              <span class="visually-hidden">收起摘要</span>
+            </button>
           </div>
+        </header>
+
+        <div id="summaryStaleBanner" class="summary-stale" hidden>
+          <span id="summaryStaleText">图谱结构已调整，摘要可能已过时。</span>
+          <button id="staleRegenerateButton" type="button" class="link-button">重新生成摘要</button>
         </div>
-        <article id="reportOutput" class="report-output">暂无知识图谱。请点击“生成知识图谱”。</article>
+
+        <div id="summaryBody" class="summary-body">
+          <article id="reportOutput" class="report-output">暂无摘要。整理好切片后点击“重新生成摘要”。</article>
+          <details id="summarySettings" class="summary-settings">
+            <summary>生成设置</summary>
+            <label class="field-label" for="userPrompt">本次摘要 prompt</label>
+            <textarea
+              id="userPrompt"
+              rows="4"
+              placeholder="请重点总结我目前已经理解的核心概念、概念之间的推理关系、仍不稳定的地方，以及下一步学习路径。"
+            ></textarea>
+          </details>
+          <p id="status" class="summary-status" role="status">等待读取知识图谱。</p>
+        </div>
       </section>
 
-      <section class="evidence-section" aria-labelledby="evidenceTitle">
-        <div class="section-heading">
-          <div>
-            <h2 id="evidenceTitle">阅读证据</h2>
-            <p>知识图谱基于历史划线、问答对话消息和摘要生成；“问答对话消息”是每条划线线程里的 selection/user/assistant 记录，不是摘要数。</p>
+      <div class="knowledge-body">
+        <aside id="evidenceDrawer" class="evidence-drawer" data-collapsed="true">
+          <button id="evidenceToggle" type="button" class="drawer-toggle" aria-expanded="false" aria-controls="evidenceDrawerBody">
+            <span class="drawer-toggle-label">阅读证据</span>
+          </button>
+          <div id="evidenceDrawerBody" class="evidence-drawer-body">
+            <div class="summary-strip" aria-label="阅读记录统计">
+              <div><span id="highlightCount">0</span><small>历史划线</small></div>
+              <div><span id="threadCount">0</span><small>问答线程</small></div>
+              <div><span id="messageCount">0</span><small>对话消息</small></div>
+              <div><span id="nodeCount">0</span><small>图谱切片</small></div>
+            </div>
+            <p class="evidence-note">切片来自划线问答；点击条目可以在画布上定位对应切片。</p>
+            <div id="evidenceList" class="evidence-list">
+              <p class="evidence-empty">暂无阅读证据。</p>
+            </div>
           </div>
-        </div>
-        <div id="evidenceList" class="evidence-list">
-          <p class="evidence-empty">暂无阅读证据。</p>
-        </div>
-      </section>
+        </aside>
+
+        <section class="graph-stage" aria-label="知识图谱画布">
+          <div class="graph-toolbar">
+            <button id="addNodeButton" type="button">＋ 新建切片</button>
+            <button id="relayoutButton" type="button" class="secondary">重新排布</button>
+            <button id="timelineButton" type="button" class="secondary">整理成时间线</button>
+            <button id="fitButton" type="button" class="secondary">适应视图</button>
+            <span class="toolbar-zoom">
+              <button id="zoomOutButton" type="button" class="icon-button" title="缩小">－</button>
+              <button id="zoomInButton" type="button" class="icon-button" title="放大">＋</button>
+            </span>
+            <button id="undoButton" type="button" class="secondary" disabled>撤销</button>
+            <button id="reloadButton" type="button" class="secondary">读取最新记录</button>
+          </div>
+          <p class="graph-hint">
+            拖动卡片可固定位置 · 从卡片右侧圆点拖到另一张卡片建立关联 · 点击连线可编辑关系 · 双击空白处新建切片
+          </p>
+          <div id="graphCanvas" class="graph-canvas"></div>
+          <p id="graphEmpty" class="graph-empty" hidden>
+            这份文档还没有问答切片。先回到阅读器划线提问，或者点“＋ 新建切片”手动写一个。
+          </p>
+        </section>
+
+        <aside id="chatPanel" class="chat-panel" data-collapsed="false" aria-label="图谱问答">
+          <header class="chat-header">
+            <h2>图谱问答</h2>
+            <div class="chat-header-actions">
+              <button id="chatClearButton" type="button" class="link-button">清空</button>
+              <button
+                id="chatCollapseButton"
+                type="button"
+                class="icon-button"
+                aria-expanded="true"
+                aria-controls="chatBody"
+                title="收起问答窗口"
+              >
+                <span aria-hidden="true">›</span>
+                <span class="visually-hidden">收起问答窗口</span>
+              </button>
+            </div>
+          </header>
+          <div id="chatBody" class="chat-body">
+            <div id="chatFocusList" class="chat-focus-list" hidden></div>
+            <div id="chatMessages" class="chat-messages">
+              <p class="chat-empty">就这张图谱提问，例如：我已经问清楚了哪些概念？还有哪些没问透？</p>
+            </div>
+            <form id="chatForm" class="chat-composer">
+              <textarea id="chatInput" rows="3" placeholder="就这张图谱提问，Ctrl + Enter 发送"></textarea>
+              <div class="chat-composer-row">
+                <span id="chatStatus" class="chat-status" role="status"></span>
+                <button id="chatStopButton" type="button" class="secondary" hidden>停止</button>
+                <button id="chatSendButton" type="submit">发送</button>
+              </div>
+            </form>
+          </div>
+        </aside>
+      </div>
     </main>
+
+    <aside id="nodeDetail" class="node-detail" hidden aria-label="切片详情">
+      <header class="node-detail-header">
+        <h2 id="nodeDetailTitle">切片详情</h2>
+        <button id="nodeDetailClose" type="button" class="icon-button" title="关闭">
+          <span aria-hidden="true">×</span>
+          <span class="visually-hidden">关闭</span>
+        </button>
+      </header>
+      <div class="node-detail-body">
+        <p id="nodeDetailMeta" class="node-detail-meta"></p>
+        <section id="nodeDetailQuoteSection" class="node-detail-section" hidden>
+          <h3>划线原文</h3>
+          <blockquote id="nodeDetailQuote"></blockquote>
+        </section>
+        <section id="nodeDetailQuestionSection" class="node-detail-section" hidden>
+          <h3>问题</h3>
+          <div id="nodeDetailQuestion" class="message-content"></div>
+        </section>
+        <section id="nodeDetailAnswerSection" class="node-detail-section" hidden>
+          <h3>回答</h3>
+          <div id="nodeDetailAnswer" class="message-content"></div>
+        </section>
+        <section id="nodeDetailEditSection" class="node-detail-section" hidden>
+          <h3>编辑切片</h3>
+          <label class="field-label" for="nodeDetailTitleInput">标题</label>
+          <input id="nodeDetailTitleInput" type="text" maxlength="120">
+          <label class="field-label" for="nodeDetailBodyInput">正文</label>
+          <textarea id="nodeDetailBodyInput" rows="6"></textarea>
+          <button id="nodeDetailSave" type="button">保存切片</button>
+        </section>
+      </div>
+      <footer class="node-detail-actions">
+        <button id="nodeDetailFocus" type="button">就这个切片继续问</button>
+        <button id="nodeDetailLocate" type="button" class="secondary">在阅读器中定位</button>
+        <button id="nodeDetailConvert" type="button" class="secondary" hidden>转为手动切片</button>
+        <button id="nodeDetailDelete" type="button" class="danger">删除切片</button>
+      </footer>
+    </aside>
+
+    <div id="edgePopover" class="edge-popover" hidden role="dialog" aria-label="编辑关联">
+      <p id="edgePopoverMeta" class="edge-popover-meta"></p>
+      <label class="field-label" for="edgeRelationInput">关联说明</label>
+      <input id="edgeRelationInput" type="text" maxlength="40" placeholder="例如：前提 / 反例 / 同一个概念">
+      <div class="edge-popover-actions">
+        <button id="edgeConfirmButton" type="button">保存</button>
+        <button id="edgeReverseButton" type="button" class="secondary">反向</button>
+        <button id="edgeDeleteButton" type="button" class="danger">删除</button>
+      </div>
+    </div>
 
     <script type="module" src="../shared/theme.js"></script>
     <script type="module" src="./knowledge.js"></script>

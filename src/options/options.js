@@ -42,6 +42,15 @@ const aiContextControls = {
   }
 };
 
+const knowledgeGraphControls = {
+  autoLinkMode: document.querySelector("#kgAutoLinkMode"),
+  cardBody: document.querySelector("#kgCardBody"),
+  chatContextScope: document.querySelector("#kgChatContextScope"),
+  layoutRepulsion: document.querySelector("#kgLayoutRepulsion"),
+  layoutLinkDistance: document.querySelector("#kgLayoutLinkDistance"),
+  layoutCenterGravity: document.querySelector("#kgLayoutCenterGravity")
+};
+
 const contextCapabilityState = {
   documentId: contextDocumentId,
   documentTitle: "",
@@ -139,7 +148,8 @@ form.addEventListener("submit", async (event) => {
       fontFamily: fontFamily.value,
       preferredFontSize: Number(fontSize.value),
       theme: getSelectedTheme()
-    }
+    },
+    knowledgeGraph: collectKnowledgeGraphSettings(currentSettings.knowledgeGraph)
   });
   renderSettings(saved);
   applyTheme(saved.reader?.theme);
@@ -201,6 +211,7 @@ function renderSettings(settings) {
   systemPrompt.value = ai.systemPrompt;
   selectionPrompt.value = ai.selectionPrompt;
   renderAiContextSettings(aiContext);
+  renderKnowledgeGraphSettings(settings.knowledgeGraph);
   renderContextAvailabilityPanel();
   applyContextCapabilityControlState();
 
@@ -243,6 +254,66 @@ function renderAiContextSettings(context) {
     normalizeKnowledgeFullTextScope(knowledge.fullTextScope, knowledge.includeFullText),
     DEFAULT_SETTINGS.ai.context.knowledge.fullTextScope
   );
+}
+
+function renderKnowledgeGraphSettings(knowledgeGraphSettings = {}) {
+  const kg = resolveKnowledgeGraphSettings(knowledgeGraphSettings);
+  setSelectValue(knowledgeGraphControls.autoLinkMode, kg.autoLinkMode, DEFAULT_SETTINGS.knowledgeGraph.autoLinkMode);
+  setSelectValue(knowledgeGraphControls.cardBody, kg.cardBody, DEFAULT_SETTINGS.knowledgeGraph.cardBody);
+  setSelectValue(
+    knowledgeGraphControls.chatContextScope,
+    kg.chatContextScope,
+    DEFAULT_SETTINGS.knowledgeGraph.chatContextScope
+  );
+  writeNumberInput(knowledgeGraphControls.layoutRepulsion, kg.layout.repulsion);
+  writeNumberInput(knowledgeGraphControls.layoutLinkDistance, kg.layout.linkDistance);
+  writeNumberInput(knowledgeGraphControls.layoutCenterGravity, kg.layout.centerGravity);
+}
+
+function collectKnowledgeGraphSettings(existingSettings = {}) {
+  const existing = resolveKnowledgeGraphSettings(existingSettings);
+  return {
+    ...existing,
+    autoLinkMode: normalizeKgEnum(
+      knowledgeGraphControls.autoLinkMode.value,
+      ["sequence", "thread-only", "none"],
+      DEFAULT_SETTINGS.knowledgeGraph.autoLinkMode
+    ),
+    cardBody: normalizeKgEnum(
+      knowledgeGraphControls.cardBody.value,
+      ["summary", "answer", "quote"],
+      DEFAULT_SETTINGS.knowledgeGraph.cardBody
+    ),
+    chatContextScope: normalizeKgEnum(
+      knowledgeGraphControls.chatContextScope.value,
+      ["summary-and-all", "summary-and-focused", "all-full-text"],
+      DEFAULT_SETTINGS.knowledgeGraph.chatContextScope
+    ),
+    layout: {
+      repulsion: readNumberInput(knowledgeGraphControls.layoutRepulsion, existing.layout.repulsion, {
+        integer: true,
+        min: 1000,
+        max: 200000
+      }),
+      linkDistance: readNumberInput(knowledgeGraphControls.layoutLinkDistance, existing.layout.linkDistance, {
+        integer: true,
+        min: 40,
+        max: 1000
+      }),
+      centerGravity: readNumberInput(knowledgeGraphControls.layoutCenterGravity, existing.layout.centerGravity, {
+        min: 0,
+        max: 1
+      })
+    }
+  };
+}
+
+function resolveKnowledgeGraphSettings(knowledgeGraphSettings = {}) {
+  return deepMerge(DEFAULT_SETTINGS.knowledgeGraph, isPlainObject(knowledgeGraphSettings) ? knowledgeGraphSettings : {});
+}
+
+function normalizeKgEnum(value, allowed, fallback) {
+  return allowed.includes(value) ? value : fallback;
 }
 
 function collectAiContextSettings(aiSettings = {}) {
@@ -565,6 +636,20 @@ function validateSettingsForm() {
     validateNumberInput(aiContextControls.knowledge.neighborBlockCount, "知识图谱相邻段落数量", {
       min: 0,
       integer: true
+    }),
+    validateNumberInput(knowledgeGraphControls.layoutRepulsion, "力导向布局节点斥力", {
+      min: 1000,
+      max: 200000,
+      integer: true
+    }),
+    validateNumberInput(knowledgeGraphControls.layoutLinkDistance, "力导向布局连线长度", {
+      min: 40,
+      max: 1000,
+      integer: true
+    }),
+    validateNumberInput(knowledgeGraphControls.layoutCenterGravity, "力导向布局中心引力", {
+      min: 0,
+      max: 1
     }),
     validateNumberInput(fontSize, "正文字号", {
       min: 14,

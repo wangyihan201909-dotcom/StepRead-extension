@@ -11,6 +11,7 @@
       <aside class="settings-nav" aria-label="设置导航">
         <a href="#aiConfig">基础 AI</a>
         <a href="#contextConfig">context 接入</a>
+        <a href="#knowledgeGraphConfig">知识图谱</a>
         <a href="#readerConfig">阅读器外观</a>
       </aside>
 
@@ -246,6 +247,67 @@
                     </label>
                   </div>
                 </div>
+              </div>
+            </fieldset>
+          </section>
+
+          <section id="knowledgeGraphConfig" class="settings-section" aria-labelledby="knowledgeGraphConfigTitle">
+            <h2 id="knowledgeGraphConfigTitle">知识图谱</h2>
+            <p class="section-note">控制知识图谱页的切片卡片和自动连线行为；这些设置只影响图谱的呈现方式，不会删除任何图谱数据。</p>
+
+            <div class="form-grid">
+              <label>
+                <span>自动连线策略</span>
+                <small>新问答切片进入图谱时如何自动连线；已手动删除的自动连线不会重建。</small>
+                <select id="kgAutoLinkMode" name="kgAutoLinkMode">
+                  <option value="sequence">同一划线接上一轮追问，跨划线按提问顺序相连</option>
+                  <option value="thread-only">只连接同一划线下的追问</option>
+                  <option value="none">不自动连线</option>
+                </select>
+              </label>
+
+              <label>
+                <span>切片卡片正文</span>
+                <small>决定画布上每张问答卡片正文显示哪部分文字。</small>
+                <select id="kgCardBody" name="kgCardBody">
+                  <option value="summary">问答摘要</option>
+                  <option value="answer">回答开头</option>
+                  <option value="quote">划线原文</option>
+                </select>
+              </label>
+
+              <label>
+                <span>图谱问答上下文范围</span>
+                <small>「图谱问答」窗口发给模型的材料范围；聚焦切片始终完整带入。</small>
+                <select id="kgChatContextScope" name="kgChatContextScope">
+                  <option value="summary-and-all">摘要 + 全部切片标题与摘要</option>
+                  <option value="summary-and-focused">摘要 + 聚焦切片</option>
+                  <option value="all-full-text">全部切片完整问答</option>
+                </select>
+              </label>
+            </div>
+
+            <fieldset class="settings-fieldset">
+              <legend>力导向布局</legend>
+              <p class="section-note">影响「重新排布」和新切片的自动落位；数值越大效果越强。拖过的卡片会被固定，不受布局影响。</p>
+              <div class="form-grid">
+                <label>
+                  <span>节点斥力</span>
+                  <small>卡片之间相互推开的力度，默认 26000。</small>
+                  <input id="kgLayoutRepulsion" name="kgLayoutRepulsion" type="number" min="1000" max="200000" step="1000">
+                </label>
+
+                <label>
+                  <span>连线长度</span>
+                  <small>相连的卡片之间希望保持的距离（像素），默认 240。</small>
+                  <input id="kgLayoutLinkDistance" name="kgLayoutLinkDistance" type="number" min="40" max="1000" step="10">
+                </label>
+
+                <label>
+                  <span>中心引力</span>
+                  <small>把卡片拉回画布中心的力度（0-1 之间的小数），默认 0.035。</small>
+                  <input id="kgLayoutCenterGravity" name="kgLayoutCenterGravity" type="number" min="0" max="1" step="0.005">
+                </label>
               </div>
             </fieldset>
           </section>

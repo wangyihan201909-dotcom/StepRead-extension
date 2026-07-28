@@ -17,6 +17,7 @@ import { answerThread } from "../shared/ai-client.js";
 import { normalizeFormulaSelection } from "../shared/formula-text-normalizer.js";
 import { openOrFocusExtensionPage } from "../shared/navigation.js";
 import { saveQaTurnSummary } from "../shared/qa-summary.js";
+import { renderMessageContent } from "../shared/rich-text.js";
 import {
   createStablePdfDocumentId,
   getReadablePdfSourceInfo,
@@ -81,6 +82,7 @@ const state = {
   activePdfPageNumber: 0,
   sourceUrl: new URLSearchParams(location.search).get("sourceUrl") || "",
   targetDocumentId: new URLSearchParams(location.search).get("documentId") || "",
+  targetHighlightId: new URLSearchParams(location.search).get("highlightId") || "",
   pendingImportId: new URLSearchParams(location.search).get("pendingImportId") || "",
   resetDataMode: new URLSearchParams(location.search).get("resetData") || "",
   shouldResetData: Boolean(new URLSearchParams(location.search).get("resetData"))
@@ -657,6 +659,33 @@ async function loadDocument(documentId) {
   renderSelection();
   renderPanelView();
   await renderMessages();
+  await focusRequestedHighlight(documentId);
+}
+
+/**
+ * Supports deep links from the knowledge graph: ?documentId=...&highlightId=...
+ */
+async function focusRequestedHighlight(documentId) {
+  const highlightId = state.targetHighlightId;
+  if (!highlightId || documentId !== state.targetDocumentId) {
+    return;
+  }
+
+  state.targetHighlightId = "";
+  const highlight = state.highlights.find((item) => item.id === highlightId);
+  if (!highlight) {
+    setStatus("知识图谱指向的划线已经不在这份文档里了。");
+    return;
+  }
+
+  const thread =
+    state.threads.find((item) => item.id === highlight.threadId) ||
+    state.threads.find((item) => item.highlightId === highlight.id);
+  if (thread) {
+    await activateThread(thread.id);
+    return;
+  }
+  scrollHighlightIntoCenter(highlight.id);
 }
 
 async function cleanupUnsubmittedThreadRecords(documentId) {
@@ -5400,140 +5429,6 @@ function createTurnActionButton(action, label, turnState) {
   button.dataset.userMessageId = turnState.userMessageId;
   button.textContent = label;
   return button;
-}
-
-function renderMessageContent(container, content) {
-  container.replaceChildren();
-  const text = String(content || "").replace(/\r\n/g, "\n");
-  const codeBlockPattern = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g;
-  let cursor = 0;
-  let match;
-
-  while ((match = codeBlockPattern.exec(text))) {
-    appendRichText(container, text.slice(cursor, match.index));
-    appendCodeBlock(container, match[2], match[1]);
-    cursor = match.index + match[0].length;
-  }
-
-  appendRichText(container, text.slice(cursor));
-}
-
-function appendRichText(container, text) {
-  if (!text) {
-    return;
-  }
-
-  const blockMathPattern = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/g;
-  let cursor = 0;
-  let match;
-
-  while ((match = blockMathPattern.exec(text))) {
-    appendParagraphs(container, text.slice(cursor, match.index));
-    appendMathBlock(container, stripMathDelimiters(match[0]));
-    cursor = match.index + match[0].length;
-  }
-
-  appendParagraphs(container, text.slice(cursor));
-}
-
-function appendParagraphs(container, text) {
-  const paragraphs = String(text || "").split(/\n{2,}/);
-  for (const paragraphText of paragraphs) {
-    if (!paragraphText.trim()) {
-      continue;
-    }
-    const paragraph = document.createElement("p");
-    paragraph.className = "message-paragraph";
-    appendInlineContent(paragraph, paragraphText);
-    container.append(paragraph);
-  }
-}
-
-function appendInlineContent(parent, text) {
-  const inlinePattern = /(`[^`]+`|\\\([^]*?\\\)|\$[^$\n]+\$)/g;
-  let cursor = 0;
-  let match;
-
-  while ((match = inlinePattern.exec(text))) {
-    appendPlainInline(parent, text.slice(cursor, match.index));
-    const token = match[0];
-    if (token.startsWith("`")) {
-      const code = document.createElement("code");
-      code.className = "message-inline-code";
-      code.textContent = token.slice(1, -1);
-      parent.append(code);
-    } else if (!isLikelyInlineMathToken(token)) {
-      appendPlainInline(parent, token);
-    } else {
-      const math = document.createElement("span");
-      math.className = "math-inline";
-      math.textContent = stripMathDelimiters(token);
-      parent.append(math);
-    }
-    cursor = match.index + token.length;
-  }
-
-  appendPlainInline(parent, text.slice(cursor));
-}
-
-function appendPlainInline(parent, text) {
-  const lines = String(text || "").split("\n");
-  lines.forEach((line, index) => {
-    if (index > 0) {
-      parent.append(document.createElement("br"));
-    }
-    if (line) {
-      parent.append(document.createTextNode(line));
-    }
-  });
-}
-
-function appendCodeBlock(container, codeText, language) {
-  const pre = document.createElement("pre");
-  pre.className = "message-code-block";
-  const code = document.createElement("code");
-  if (language) {
-    code.dataset.language = language;
-  }
-  code.textContent = codeText.trim();
-  pre.append(code);
-  container.append(pre);
-}
-
-function appendMathBlock(container, mathText) {
-  const block = document.createElement("div");
-  block.className = "math-block";
-  block.textContent = mathText.trim();
-  container.append(block);
-}
-
-function stripMathDelimiters(token) {
-  if (token.startsWith("$$") && token.endsWith("$$")) {
-    return token.slice(2, -2);
-  }
-  if (token.startsWith("\\[") && token.endsWith("\\]")) {
-    return token.slice(2, -2);
-  }
-  if (token.startsWith("\\(") && token.endsWith("\\)")) {
-    return token.slice(2, -2);
-  }
-  if (token.startsWith("$") && token.endsWith("$")) {
-    return token.slice(1, -1);
-  }
-  return token;
-}
-
-function isLikelyInlineMathToken(token) {
-  if (token.startsWith("\\(") && token.endsWith("\\)")) {
-    return true;
-  }
-
-  if (!token.startsWith("$") || !token.endsWith("$")) {
-    return false;
-  }
-
-  const formula = stripMathDelimiters(token).trim();
-  return /\\[a-zA-Z]+|[\^_=+\-*/<>]|[∑∫√∞≈≠≤≥±×÷]|^[a-zA-Z][a-zA-Z0-9']*$/.test(formula);
 }
 
 async function captureSelection() {

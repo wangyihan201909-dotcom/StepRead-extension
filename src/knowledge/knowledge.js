@@ -3,13 +3,48 @@ import { dbGetAllByIndex, dbPut, getDocumentWithBlocks } from "../shared/db.js";
 import { getSettings } from "../shared/store.js";
 import { generateKnowledgeReport } from "../shared/ai-client.js";
 import { createKnowledgeReportSignature } from "../shared/knowledge-signature.js";
+import { markdownToBlocks } from "../shared/markdown.js";
+import { renderBlocks } from "../shared/block-renderer.js";
+import { renderMessageContent } from "../shared/rich-text.js";
+import { openOrFocusExtensionPage } from "../shared/navigation.js";
+import {
+  convertNodeToNote,
+  createGraphQaNode,
+  createGraphSignaturePayload,
+  createNoteNode,
+  createUndoStack,
+  createUserEdge,
+  deleteNodeCascade,
+  getVisibleEdges,
+  getVisibleNodes,
+  loadGraph,
+  reconcileGraph,
+  removeEdge,
+  restoreGraphSnapshot,
+  saveEdge,
+  saveNode,
+  saveNodePositions,
+  snapshotGraph,
+  sortMessages
+} from "./graph-store.js";
+import {
+  NODE_SIZE,
+  findFreeSpot,
+  resolveLayoutOptions,
+  runLayout,
+  runTimelineLayout,
+  seedMissingPositions
+} from "./graph-layout.js";
+import { createGraphView } from "./graph-view.js";
+import { createGraphChat } from "./graph-chat.js";
 
 const KNOWLEDGE_REFRESH_KEY = "knowledgeRefreshSignal";
+const KNOWLEDGE_UI_KEY = "knowledgeGraphUi";
 const KNOWLEDGE_REFRESH_DEBOUNCE_MS = 320;
 const KNOWLEDGE_GENERATION_TIMEOUT_MS = 300_000;
 const KNOWLEDGE_GENERATION_STAGES = [
-  { minElapsedSeconds: 0, label: "整理划线与问答" },
-  { minElapsedSeconds: 2, label: "生成结构化关系" },
+  { minElapsedSeconds: 0, label: "整理切片与关联" },
+  { minElapsedSeconds: 2, label: "生成结构化摘要" },
   { minElapsedSeconds: 5, label: "等待模型返回" }
 ];
 const params = new URLSearchParams(location.search);
@@ -22,7 +57,14 @@ const state = {
   threads: [],
   messagesByThread: {},
   summaries: [],
-  settings: null
+  settings: null,
+  nodes: [],
+  edges: [],
+  selectedNodeId: "",
+  selectedEdgeId: "",
+  summaryCollapsed: false,
+  chatCollapsed: false,
+  evidenceCollapsed: true
 };
 
 const generationProgress = {
@@ -33,31 +75,169 @@ const generationProgress = {
   streamRenderedContent: ""
 };
 
+const undoStack = createUndoStack();
 let knowledgeLoadSeq = 0;
 let knowledgeRefreshTimer = 0;
+let graphView = null;
+let graphChat = null;
 
 const elements = {
   documentTitle: document.querySelector("#documentTitle"),
-  reloadButton: document.querySelector("#reloadButton"),
-  generateButton: document.querySelector("#generateButton"),
+  summaryPanel: document.querySelector("#summaryPanel"),
+  summaryToggle: document.querySelector("#summaryToggle"),
+  summaryBody: document.querySelector("#summaryBody"),
+  summaryMeta: document.querySelector("#summaryMeta"),
+  summaryStaleBanner: document.querySelector("#summaryStaleBanner"),
+  summaryStaleText: document.querySelector("#summaryStaleText"),
+  staleRegenerateButton: document.querySelector("#staleRegenerateButton"),
+  regenerateButton: document.querySelector("#regenerateButton"),
   userPrompt: document.querySelector("#userPrompt"),
+  reportOutput: document.querySelector("#reportOutput"),
+  status: document.querySelector("#status"),
+  evidenceDrawer: document.querySelector("#evidenceDrawer"),
+  evidenceToggle: document.querySelector("#evidenceToggle"),
+  evidenceList: document.querySelector("#evidenceList"),
   highlightCount: document.querySelector("#highlightCount"),
   threadCount: document.querySelector("#threadCount"),
   messageCount: document.querySelector("#messageCount"),
-  summaryCount: document.querySelector("#summaryCount"),
-  evidenceList: document.querySelector("#evidenceList"),
-  status: document.querySelector("#status"),
-  reportOutput: document.querySelector("#reportOutput")
+  nodeCount: document.querySelector("#nodeCount"),
+  graphCanvas: document.querySelector("#graphCanvas"),
+  graphEmpty: document.querySelector("#graphEmpty"),
+  addNodeButton: document.querySelector("#addNodeButton"),
+  relayoutButton: document.querySelector("#relayoutButton"),
+  timelineButton: document.querySelector("#timelineButton"),
+  fitButton: document.querySelector("#fitButton"),
+  zoomInButton: document.querySelector("#zoomInButton"),
+  zoomOutButton: document.querySelector("#zoomOutButton"),
+  undoButton: document.querySelector("#undoButton"),
+  reloadButton: document.querySelector("#reloadButton"),
+  nodeDetail: document.querySelector("#nodeDetail"),
+  nodeDetailTitle: document.querySelector("#nodeDetailTitle"),
+  nodeDetailMeta: document.querySelector("#nodeDetailMeta"),
+  nodeDetailQuoteSection: document.querySelector("#nodeDetailQuoteSection"),
+  nodeDetailQuote: document.querySelector("#nodeDetailQuote"),
+  nodeDetailQuestionSection: document.querySelector("#nodeDetailQuestionSection"),
+  nodeDetailQuestion: document.querySelector("#nodeDetailQuestion"),
+  nodeDetailAnswerSection: document.querySelector("#nodeDetailAnswerSection"),
+  nodeDetailAnswer: document.querySelector("#nodeDetailAnswer"),
+  nodeDetailEditSection: document.querySelector("#nodeDetailEditSection"),
+  nodeDetailTitleInput: document.querySelector("#nodeDetailTitleInput"),
+  nodeDetailBodyInput: document.querySelector("#nodeDetailBodyInput"),
+  nodeDetailSave: document.querySelector("#nodeDetailSave"),
+  nodeDetailFocus: document.querySelector("#nodeDetailFocus"),
+  nodeDetailLocate: document.querySelector("#nodeDetailLocate"),
+  nodeDetailConvert: document.querySelector("#nodeDetailConvert"),
+  nodeDetailDelete: document.querySelector("#nodeDetailDelete"),
+  nodeDetailClose: document.querySelector("#nodeDetailClose"),
+  edgePopover: document.querySelector("#edgePopover"),
+  edgePopoverMeta: document.querySelector("#edgePopoverMeta"),
+  edgeRelationInput: document.querySelector("#edgeRelationInput"),
+  edgeConfirmButton: document.querySelector("#edgeConfirmButton"),
+  edgeReverseButton: document.querySelector("#edgeReverseButton"),
+  edgeDeleteButton: document.querySelector("#edgeDeleteButton"),
+  chatPanel: document.querySelector("#chatPanel"),
+  chatCollapseButton: document.querySelector("#chatCollapseButton"),
+  chatBody: document.querySelector("#chatBody"),
+  chatForm: document.querySelector("#chatForm"),
+  chatInput: document.querySelector("#chatInput"),
+  chatSendButton: document.querySelector("#chatSendButton"),
+  chatStopButton: document.querySelector("#chatStopButton"),
+  chatClearButton: document.querySelector("#chatClearButton"),
+  chatStatus: document.querySelector("#chatStatus"),
+  chatMessages: document.querySelector("#chatMessages"),
+  chatFocusList: document.querySelector("#chatFocusList")
 };
 
 init();
 
 function init() {
-  elements.reloadButton.addEventListener("click", loadKnowledgeData);
-  elements.generateButton.addEventListener("click", handleGenerateReport);
-  elements.userPrompt.addEventListener("input", handlePromptInput);
+  graphView = createGraphView({
+    container: elements.graphCanvas,
+    callbacks: {
+      onSelectNode: openNodeDetail,
+      onNodeMoved: handleNodeMoved,
+      onConnect: handleConnect,
+      onSelectEdge: openEdgePopover,
+      onCanvasClick: clearSelection,
+      onCanvasDoubleClick: handleCanvasDoubleClick
+    }
+  });
+
+  graphChat = createGraphChat({
+    elements,
+    documentId,
+    callbacks: {
+      getGraphContext: () => ({
+        documentRecord: state.documentRecord,
+        report: state.documentRecord?.knowledgeReport?.content || "",
+        nodes: getGraphNodes(),
+        edges: getGraphEdges(),
+        settings: state.settings
+      }),
+      onAddToGraph: handleAddChatAnswerToGraph,
+      onFocusChange: () => renderGraph()
+    }
+  });
+
+  bindToolbar();
+  bindSummaryPanel();
+  bindNodeDetail();
+  bindEdgePopover();
   bindExternalRefresh();
+  restoreUiState();
   loadKnowledgeData();
+}
+
+function bindToolbar() {
+  elements.reloadButton.addEventListener("click", () => loadKnowledgeData());
+  elements.addNodeButton.addEventListener("click", () => handleCanvasDoubleClick(null));
+  elements.relayoutButton.addEventListener("click", handleRelayout);
+  elements.timelineButton.addEventListener("click", handleTimelineLayout);
+  elements.fitButton.addEventListener("click", () => graphView.fit());
+  elements.zoomInButton.addEventListener("click", () => graphView.zoomBy(1.2));
+  elements.zoomOutButton.addEventListener("click", () => graphView.zoomBy(1 / 1.2));
+  elements.undoButton.addEventListener("click", handleUndo);
+  elements.evidenceToggle.addEventListener("click", () => setEvidenceCollapsed(!state.evidenceCollapsed));
+  elements.evidenceList.addEventListener("click", handleEvidenceClick);
+  elements.chatCollapseButton.addEventListener("click", () => setChatCollapsed(!state.chatCollapsed));
+  document.addEventListener("keydown", handleGlobalKeydown);
+}
+
+function bindSummaryPanel() {
+  elements.summaryToggle.addEventListener("click", () => setSummaryCollapsed(!state.summaryCollapsed));
+  elements.regenerateButton.addEventListener("click", handleGenerateReport);
+  elements.staleRegenerateButton.addEventListener("click", handleGenerateReport);
+  elements.userPrompt.addEventListener("input", () => void refreshSummaryFreshness());
+}
+
+function bindNodeDetail() {
+  elements.nodeDetailClose.addEventListener("click", closeNodeDetail);
+  elements.nodeDetailSave.addEventListener("click", handleSaveNodeEdits);
+  elements.nodeDetailDelete.addEventListener("click", handleDeleteNode);
+  elements.nodeDetailLocate.addEventListener("click", handleLocateInReader);
+  elements.nodeDetailConvert.addEventListener("click", handleConvertToNote);
+  elements.nodeDetailFocus.addEventListener("click", () => {
+    if (!state.selectedNodeId) {
+      return;
+    }
+    graphChat.addFocusNode(state.selectedNodeId);
+    setChatCollapsed(false);
+  });
+}
+
+function bindEdgePopover() {
+  elements.edgeConfirmButton.addEventListener("click", handleSaveEdge);
+  elements.edgeReverseButton.addEventListener("click", handleReverseEdge);
+  elements.edgeDeleteButton.addEventListener("click", handleDeleteEdge);
+  document.addEventListener("pointerdown", (event) => {
+    if (elements.edgePopover.hidden) {
+      return;
+    }
+    if (elements.edgePopover.contains(event.target) || event.target.closest?.(".graph-edge")) {
+      return;
+    }
+    closeEdgePopover();
+  });
 }
 
 function bindExternalRefresh() {
@@ -69,12 +249,10 @@ function bindExternalRefresh() {
     if (areaName !== "local") {
       return;
     }
-
     const signal = changes[KNOWLEDGE_REFRESH_KEY]?.newValue;
     if (signal?.documentId !== documentId) {
       return;
     }
-
     scheduleKnowledgeRefresh();
   });
 }
@@ -83,56 +261,80 @@ function scheduleKnowledgeRefresh() {
   globalThis.clearTimeout(knowledgeRefreshTimer);
   knowledgeRefreshTimer = globalThis.setTimeout(() => {
     knowledgeRefreshTimer = 0;
-    void loadKnowledgeData({ external: true, preserveScroll: true });
+    void loadKnowledgeData({ external: true });
   }, KNOWLEDGE_REFRESH_DEBOUNCE_MS);
 }
 
 async function loadKnowledgeData(options = {}) {
   if (!documentId) {
     setStatus("URL 中缺少 documentId，无法读取阅读记录。");
-    elements.generateButton.disabled = true;
-    elements.reloadButton.disabled = true;
+    setBusy(true);
     return;
   }
 
   const loadSeq = ++knowledgeLoadSeq;
-  const scrollState = options.preserveScroll ? captureKnowledgeScrollState() : null;
   const generating = isKnowledgeGenerating();
-  setBusy(true, generating ? "" : options.external ? "阅读记录已更新，正在刷新..." : "正在读取阅读记录...");
+  setBusy(true, generating ? "" : options.external ? "阅读记录已更新，正在同步图谱..." : "正在读取阅读记录...");
   try {
-    const [{ document, blocks }, highlights, threads, summaries, settings] = await Promise.all([
+    const [{ document, blocks }, highlights, threads, summaries, settings, graph] = await Promise.all([
       getDocumentWithBlocks(documentId),
       dbGetAllByIndex("highlights", "by_documentId", documentId),
       dbGetAllByIndex("threads", "by_documentId", documentId),
       dbGetAllByIndex("summaries", "by_documentId", documentId),
-      getSettings()
+      getSettings(),
+      loadGraph(documentId)
     ]);
 
     if (!document) {
       throw new Error("IndexedDB 中没有找到这个 documentId 对应的文档。");
     }
-
     if (loadSeq !== knowledgeLoadSeq) {
       return;
     }
 
-    const sortedHighlights = sortHighlightsByPosition(highlights, blocks);
-    const sortedThreads = sortThreadsByHighlightPosition(threads, sortedHighlights, blocks);
-
     state.documentRecord = document;
     state.blocks = blocks;
-    state.highlights = sortedHighlights;
-    state.threads = sortedThreads;
-    state.messagesByThread = await loadMessagesByThread(sortedThreads);
+    state.highlights = highlights;
+    state.threads = threads;
+    state.messagesByThread = await loadMessagesByThread(threads);
     state.summaries = sortSummaries(summaries);
     state.settings = settings;
 
+    const reconciled = await reconcileGraph({
+      documentId,
+      nodes: graph.nodes,
+      edges: graph.edges,
+      highlights,
+      threads,
+      messagesByThread: state.messagesByThread,
+      summaries: state.summaries,
+      blocks,
+      settings
+    });
+    state.nodes = reconciled.nodes;
+    state.edges = reconciled.edges;
+
+    await layoutNewNodes(reconciled.createdNodeIds);
+
+    if (!options.external) {
+      undoStack.clear();
+      updateUndoButton();
+    }
+
     renderDocumentState();
-    if (isKnowledgeGenerating()) {
-      restoreKnowledgeScrollState(scrollState);
+    renderGraph();
+    if (!options.external) {
+      requestAnimationFrame(() => graphView.fit());
+    }
+    graphChat.pruneFocusNodes(getGraphNodes().map((node) => node.id));
+    if (!options.external) {
+      await graphChat.load();
     } else {
+      graphChat.renderFocusList();
+    }
+
+    if (!isKnowledgeGenerating()) {
       await renderCachedReportState();
-      restoreKnowledgeScrollState(scrollState);
     }
   } catch (error) {
     if (loadSeq !== knowledgeLoadSeq) {
@@ -157,42 +359,549 @@ async function loadMessagesByThread(threads) {
   return Object.fromEntries(entries);
 }
 
+/**
+ * Only nodes without coordinates are laid out, and only they (plus their direct
+ * neighbours) may move, so arriving slices never scramble an arrangement the
+ * reader already made.
+ */
+async function layoutNewNodes(createdNodeIds = []) {
+  const visibleNodes = getGraphNodes();
+  const seeded = seedMissingPositions(visibleNodes);
+  const mobile = new Set([...seeded, ...createdNodeIds]);
+  if (!mobile.size) {
+    return;
+  }
+
+  for (const edge of getGraphEdges()) {
+    if (mobile.has(edge.fromNodeId)) {
+      mobile.add(edge.toNodeId);
+    }
+    if (mobile.has(edge.toNodeId)) {
+      mobile.add(edge.fromNodeId);
+    }
+  }
+
+  runLayout(visibleNodes, getGraphEdges(), {
+    ...resolveLayoutOptions(state.settings),
+    mobileIds: mobile
+  });
+  await saveNodePositions(visibleNodes.filter((node) => mobile.has(node.id)));
+}
+
+function getGraphNodes() {
+  return getVisibleNodes(state.nodes);
+}
+
+function getGraphEdges() {
+  const visibleNodeIds = new Set(getGraphNodes().map((node) => node.id));
+  return getVisibleEdges(state.edges).filter(
+    (edge) => visibleNodeIds.has(edge.fromNodeId) && visibleNodeIds.has(edge.toNodeId)
+  );
+}
+
+function renderGraph() {
+  const nodes = getGraphNodes();
+  elements.graphEmpty.hidden = nodes.length > 0;
+  graphView.render({
+    nodes,
+    edges: getGraphEdges(),
+    selectedNodeId: state.selectedNodeId,
+    selectedEdgeId: state.selectedEdgeId,
+    focusNodeIds: graphChat.getFocusNodeIds(),
+    cardBody: state.settings?.knowledgeGraph?.cardBody || "summary",
+    cardBodyLimit: state.settings?.knowledgeGraph?.cardBodyLimit || 160
+  });
+  elements.nodeCount.textContent = String(nodes.length);
+}
+
+function renderDocumentState() {
+  elements.documentTitle.textContent = state.documentRecord?.title || "未命名文档";
+  elements.highlightCount.textContent = String(state.highlights.length);
+  elements.threadCount.textContent = String(state.threads.length);
+  elements.messageCount.textContent = String(getMessageCount());
+  renderEvidenceList();
+}
+
+function renderEvidenceList() {
+  elements.evidenceList.replaceChildren();
+  const nodes = getGraphNodes();
+  if (!nodes.length) {
+    const empty = document.createElement("p");
+    empty.className = "evidence-empty";
+    empty.textContent = "暂无阅读证据。先在 PDF 中划线并提问，图谱会读取这些记录。";
+    elements.evidenceList.append(empty);
+    return;
+  }
+
+  for (const node of nodes) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "evidence-item";
+    item.dataset.nodeId = node.id;
+
+    const title = document.createElement("span");
+    title.className = "evidence-item-title";
+    title.textContent = `${node.kind === "qa" ? `#${(node.order ?? 0) + 1} ` : ""}${node.title || "未命名切片"}`;
+
+    const text = document.createElement("span");
+    text.className = "evidence-item-text";
+    text.textContent = createSnippet(node.summary || node.body || node.quote || node.answer, 120);
+
+    const meta = document.createElement("span");
+    meta.className = "evidence-item-meta";
+    meta.textContent = [node.chapterTitle, formatDateTime(node.createdAt)].filter(Boolean).join(" · ");
+
+    item.append(title, text, meta);
+    elements.evidenceList.append(item);
+  }
+}
+
+function handleEvidenceClick(event) {
+  const item = event.target.closest?.(".evidence-item");
+  if (!item?.dataset.nodeId) {
+    return;
+  }
+  openNodeDetail(item.dataset.nodeId);
+  graphView.focusNode(item.dataset.nodeId);
+}
+
+/* ----------------------------------------------------------------- graph edits */
+
+function pushUndoSnapshot() {
+  undoStack.push(snapshotGraph({ nodes: state.nodes, edges: state.edges }));
+  updateUndoButton();
+}
+
+function updateUndoButton() {
+  elements.undoButton.disabled = undoStack.size === 0;
+}
+
+async function handleUndo() {
+  const snapshot = undoStack.pop();
+  updateUndoButton();
+  if (!snapshot) {
+    return;
+  }
+
+  await restoreGraphSnapshot(documentId, snapshot);
+  const graph = await loadGraph(documentId);
+  state.nodes = graph.nodes;
+  state.edges = graph.edges;
+  state.selectedNodeId = "";
+  closeNodeDetail();
+  closeEdgePopover();
+  renderGraph();
+  renderEvidenceList();
+  await refreshSummaryFreshness();
+  setStatus("已撤销上一步图谱调整。");
+}
+
+async function handleNodeMoved(nodeId, x, y) {
+  const node = state.nodes.find((item) => item.id === nodeId);
+  if (!node) {
+    return;
+  }
+  pushUndoSnapshot();
+  const moved = { ...node, x, y, pinned: true };
+  Object.assign(node, moved);
+  await saveNode(moved);
+  renderGraph();
+}
+
+async function handleConnect(fromNodeId, toNodeId, clientPoint) {
+  const duplicate = state.edges.find(
+    (edge) => !edge.removed && edge.fromNodeId === fromNodeId && edge.toNodeId === toNodeId
+  );
+  if (duplicate) {
+    openEdgePopover(duplicate.id, clientPoint);
+    return;
+  }
+
+  pushUndoSnapshot();
+  const edge = await createUserEdge({ documentId, fromNodeId, toNodeId, relation: "" });
+  state.edges = [...state.edges, edge];
+  renderGraph();
+  openEdgePopover(edge.id, clientPoint);
+  await refreshSummaryFreshness();
+  setStatus("已新建关联，填写关联说明可以让摘要更准确。");
+}
+
+async function handleCanvasDoubleClick(graphPoint) {
+  pushUndoSnapshot();
+  const spot = findFreeSpot(getGraphNodes(), graphPoint || getViewportCenterPoint());
+  const node = await createNoteNode({ documentId, x: spot.x, y: spot.y });
+  state.nodes = [...state.nodes, node];
+  renderGraph();
+  renderEvidenceList();
+  openNodeDetail(node.id);
+  elements.nodeDetailTitleInput.focus();
+  elements.nodeDetailTitleInput.select();
+  await refreshSummaryFreshness();
+  setStatus("已新建手动切片，填写内容后记得保存。");
+}
+
+function getViewportCenterPoint() {
+  const nodes = getGraphNodes();
+  if (!nodes.length) {
+    return { x: 0, y: 0 };
+  }
+  const last = nodes[nodes.length - 1];
+  return { x: (last.x ?? 0) + NODE_SIZE.width + 60, y: last.y ?? 0 };
+}
+
+async function handleRelayout() {
+  pushUndoSnapshot();
+  const nodes = getGraphNodes();
+  for (const node of nodes) {
+    node.pinned = false;
+  }
+  seedMissingPositions(nodes);
+  runLayout(nodes, getGraphEdges(), resolveLayoutOptions(state.settings));
+  await saveNodePositions(nodes);
+  renderGraph();
+  graphView.fit();
+  setStatus("已按关联关系重新排布；再拖动任意卡片可以重新固定它。");
+}
+
+async function handleTimelineLayout() {
+  pushUndoSnapshot();
+  const nodes = getGraphNodes();
+  runTimelineLayout(nodes);
+  for (const node of nodes) {
+    node.pinned = true;
+  }
+  await saveNodePositions(nodes);
+  renderGraph();
+  graphView.fit();
+  setStatus("已按提问顺序整理成时间线，同一条划线的追问排在同一行右侧。");
+}
+
+async function handleAddChatAnswerToGraph({ question, answer, model, focusNodeIds }) {
+  pushUndoSnapshot();
+  const previousNodeIds = getLastNodeIdAsArray();
+  const spot = findFreeSpot(getGraphNodes(), getViewportCenterPoint());
+  const node = await createGraphQaNode({ documentId, question, answer, model, x: spot.x, y: spot.y });
+  state.nodes = [...state.nodes, node];
+
+  const targets = focusNodeIds?.length ? focusNodeIds : previousNodeIds;
+  for (const targetId of targets) {
+    if (targetId === node.id) {
+      continue;
+    }
+    const edge = await createUserEdge({
+      documentId,
+      fromNodeId: targetId,
+      toNodeId: node.id,
+      relation: "图谱追问"
+    });
+    state.edges = [...state.edges, edge];
+  }
+
+  renderGraph();
+  renderEvidenceList();
+  await refreshSummaryFreshness();
+  return node;
+}
+
+function getLastNodeIdAsArray() {
+  const nodes = getGraphNodes();
+  const last = nodes[nodes.length - 1];
+  return last ? [last.id] : [];
+}
+
+/* ------------------------------------------------------------- node detail */
+
+function openNodeDetail(nodeId) {
+  const node = getGraphNodes().find((item) => item.id === nodeId);
+  if (!node) {
+    return;
+  }
+
+  state.selectedNodeId = nodeId;
+  state.selectedEdgeId = "";
+  closeEdgePopover();
+  renderGraph();
+
+  elements.nodeDetail.hidden = false;
+  elements.nodeDetailTitle.textContent = node.title || "未命名切片";
+  elements.nodeDetailMeta.textContent = [
+    node.kind === "qa" ? `第 ${(node.order ?? 0) + 1} 次提问` : node.kind === "note" ? "手动切片" : "图谱提问",
+    node.chapterTitle,
+    formatDateTime(node.createdAt),
+    node.orphan ? "原始阅读记录已删除" : ""
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  toggleSection(elements.nodeDetailQuoteSection, Boolean(node.quote), () => {
+    elements.nodeDetailQuote.textContent = node.quote;
+  });
+  toggleSection(elements.nodeDetailQuestionSection, Boolean(node.question), () => {
+    renderMessageContent(elements.nodeDetailQuestion, node.question);
+  });
+  toggleSection(elements.nodeDetailAnswerSection, Boolean(node.answer), () => {
+    renderMessageContent(elements.nodeDetailAnswer, node.answer);
+  });
+
+  const editable = node.kind !== "qa" || node.orphan;
+  elements.nodeDetailEditSection.hidden = !editable;
+  elements.nodeDetailTitleInput.value = node.title || "";
+  elements.nodeDetailBodyInput.value = node.body || "";
+  elements.nodeDetailLocate.hidden = !node.highlightId;
+  elements.nodeDetailConvert.hidden = !(node.kind === "qa" && node.orphan);
+}
+
+function toggleSection(section, visible, render) {
+  section.hidden = !visible;
+  if (visible) {
+    render();
+  }
+}
+
+function closeNodeDetail() {
+  elements.nodeDetail.hidden = true;
+}
+
+function clearSelection() {
+  state.selectedNodeId = "";
+  state.selectedEdgeId = "";
+  closeNodeDetail();
+  closeEdgePopover();
+  renderGraph();
+}
+
+async function handleSaveNodeEdits() {
+  const node = state.nodes.find((item) => item.id === state.selectedNodeId);
+  if (!node) {
+    return;
+  }
+
+  pushUndoSnapshot();
+  const updated = {
+    ...node,
+    title: elements.nodeDetailTitleInput.value.trim() || "未命名切片",
+    body: elements.nodeDetailBodyInput.value,
+    titleEdited: true
+  };
+  Object.assign(node, await saveNode(updated));
+  renderGraph();
+  renderEvidenceList();
+  openNodeDetail(node.id);
+  await refreshSummaryFreshness();
+  setStatus("切片已保存。");
+}
+
+async function handleConvertToNote() {
+  const node = state.nodes.find((item) => item.id === state.selectedNodeId);
+  if (!(node?.kind === "qa" && node.orphan)) {
+    return;
+  }
+
+  pushUndoSnapshot();
+  const converted = await convertNodeToNote({
+    ...node,
+    title: elements.nodeDetailTitleInput.value.trim() || node.title || "未命名切片",
+    body: elements.nodeDetailBodyInput.value
+  });
+  state.nodes = state.nodes.map((item) => (item.id === node.id ? converted : item));
+  renderGraph();
+  renderEvidenceList();
+  openNodeDetail(converted.id);
+  await refreshSummaryFreshness();
+  setStatus("已转为手动切片：与已删除的阅读记录脱钩，手动建立的连线保持不变。");
+}
+
+async function handleDeleteNode() {
+  const node = state.nodes.find((item) => item.id === state.selectedNodeId);
+  if (!node) {
+    return;
+  }
+
+  pushUndoSnapshot();
+  const result = await deleteNodeCascade({ node, edges: state.edges });
+  const removedEdgeIds = new Set(result.removedEdgeIds);
+  state.edges = state.edges.filter((edge) => !removedEdgeIds.has(edge.id));
+  state.nodes = result.node
+    ? state.nodes.map((item) => (item.id === node.id ? result.node : item))
+    : state.nodes.filter((item) => item.id !== node.id);
+
+  state.selectedNodeId = "";
+  closeNodeDetail();
+  renderGraph();
+  renderEvidenceList();
+  graphChat.pruneFocusNodes(getGraphNodes().map((item) => item.id));
+  await refreshSummaryFreshness();
+  setStatus(
+    node.kind === "qa"
+      ? "已从图谱中移除这个切片，阅读器里的划线和问答记录仍然保留。"
+      : "已删除这个手动切片。"
+  );
+}
+
+async function handleLocateInReader() {
+  const node = state.nodes.find((item) => item.id === state.selectedNodeId);
+  if (!node?.highlightId) {
+    return;
+  }
+  await openOrFocusExtensionPage(
+    `src/reader/reader.html?documentId=${encodeURIComponent(documentId)}&highlightId=${encodeURIComponent(node.highlightId)}`
+  );
+}
+
+/* ------------------------------------------------------------- edge popover */
+
+function openEdgePopover(edgeId, clientPoint) {
+  const edge = state.edges.find((item) => item.id === edgeId);
+  if (!edge) {
+    return;
+  }
+
+  state.selectedEdgeId = edgeId;
+  renderGraph();
+
+  const nodesById = new Map(state.nodes.map((node) => [node.id, node]));
+  elements.edgePopoverMeta.textContent = [
+    `${nodesById.get(edge.fromNodeId)?.title || "切片"} → ${nodesById.get(edge.toNodeId)?.title || "切片"}`,
+    edge.origin === "user" ? "你手动建立的关联" : edge.confirmed ? "你已确认的自动关联" : "按提问顺序自动生成，尚未确认"
+  ].join(" · ");
+  elements.edgeRelationInput.value = edge.relation || "";
+  elements.edgeConfirmButton.textContent = edge.origin === "user" || edge.confirmed ? "保存" : "保存并确认";
+
+  elements.edgePopover.hidden = false;
+  const point = clientPoint || { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+  const rect = elements.edgePopover.getBoundingClientRect();
+  elements.edgePopover.style.left = `${Math.min(point.x, window.innerWidth - rect.width - 16)}px`;
+  elements.edgePopover.style.top = `${Math.min(point.y, window.innerHeight - rect.height - 16)}px`;
+  elements.edgeRelationInput.focus();
+}
+
+function closeEdgePopover() {
+  elements.edgePopover.hidden = true;
+  if (state.selectedEdgeId) {
+    state.selectedEdgeId = "";
+    renderGraph();
+  }
+}
+
+async function handleSaveEdge() {
+  const edge = state.edges.find((item) => item.id === state.selectedEdgeId);
+  if (!edge) {
+    return;
+  }
+
+  pushUndoSnapshot();
+  const updated = await saveEdge({
+    ...edge,
+    relation: elements.edgeRelationInput.value.trim(),
+    confirmed: true
+  });
+  state.edges = state.edges.map((item) => (item.id === updated.id ? updated : item));
+  closeEdgePopover();
+  renderGraph();
+  await refreshSummaryFreshness();
+  setStatus("关联已保存，摘要重新生成时会优先采信它。");
+}
+
+async function handleReverseEdge() {
+  const edge = state.edges.find((item) => item.id === state.selectedEdgeId);
+  if (!edge) {
+    return;
+  }
+
+  pushUndoSnapshot();
+  const updated = await saveEdge({
+    ...edge,
+    fromNodeId: edge.toNodeId,
+    toNodeId: edge.fromNodeId,
+    relation: elements.edgeRelationInput.value.trim(),
+    confirmed: true
+  });
+  state.edges = state.edges.map((item) => (item.id === updated.id ? updated : item));
+  renderGraph();
+  openEdgePopover(updated.id, null);
+  await refreshSummaryFreshness();
+}
+
+async function handleDeleteEdge() {
+  const edge = state.edges.find((item) => item.id === state.selectedEdgeId);
+  if (!edge) {
+    return;
+  }
+
+  pushUndoSnapshot();
+  const result = await removeEdge(edge);
+  state.edges = result.deleted
+    ? state.edges.filter((item) => item.id !== edge.id)
+    : state.edges.map((item) => (item.id === edge.id ? result.edge : item));
+  closeEdgePopover();
+  renderGraph();
+  await refreshSummaryFreshness();
+  setStatus(result.deleted ? "关联已删除。" : "已删除这条自动关联，同步阅读记录时不会再生成它。");
+}
+
+/* ------------------------------------------------------------------ summary */
+
 async function renderCachedReportState() {
   const report = state.documentRecord?.knowledgeReport;
   if (!report?.content) {
-    elements.reportOutput.textContent = "暂无知识图谱。请点击“生成知识图谱”。";
-    setStatus("已读取阅读记录，尚未生成知识图谱。");
+    elements.reportOutput.textContent = "暂无摘要。整理好切片后点击“重新生成摘要”。";
+    elements.summaryMeta.textContent = "摘要是这张图谱的文字版总览。";
+    setStatus("已读取阅读记录，尚未生成摘要。");
+    setSummaryStale(false);
     return;
   }
 
   if (!elements.userPrompt.value && report.userPrompt) {
     elements.userPrompt.value = report.userPrompt;
   }
-  elements.reportOutput.textContent = report.content;
+  renderReportMarkdown(report.content);
+  elements.summaryMeta.textContent = `摘要生成时间：${formatDateTime(report.generatedAt)}`;
 
-  const currentSignature = await createCurrentSignature();
-  if (report.signature === currentSignature) {
-    setStatus(`当前数据未变化，已显示缓存知识图谱，生成时间：${formatDateTime(report.generatedAt)}。`);
-    return;
+  const fresh = await refreshSummaryFreshness();
+  setStatus(fresh ? "当前图谱与摘要一致。" : "图谱内容已变化，可在顶部重新生成摘要。");
+}
+
+function renderReportMarkdown(markdown) {
+  elements.reportOutput.classList.remove("report-output-streaming");
+  const blocks = markdownToBlocks(markdown, documentId);
+  renderBlocks(elements.reportOutput, blocks);
+}
+
+/** Returns true when the cached summary still matches the current graph. */
+async function refreshSummaryFreshness() {
+  const report = state.documentRecord?.knowledgeReport;
+  if (!report?.content) {
+    setSummaryStale(false);
+    return true;
   }
 
-  setStatus("已显示上次知识图谱；当前划线、问答、摘要或 prompt 已变化，请点击生成知识图谱。");
+  const signature = await createCurrentSignature();
+  const fresh = report.signature === signature;
+  setSummaryStale(!fresh);
+  return fresh;
+}
+
+function setSummaryStale(isStale) {
+  elements.summaryStaleBanner.hidden = !isStale;
+  elements.summaryPanel.classList.toggle("is-stale", isStale);
 }
 
 async function handleGenerateReport() {
   if (!state.documentRecord) {
-    setStatus("还没有可生成知识图谱的阅读记录。");
+    setStatus("还没有可生成摘要的阅读记录。");
     return;
   }
 
   const signature = await createCurrentSignature();
   const cachedReport = state.documentRecord.knowledgeReport;
   if (cachedReport?.signature === signature && cachedReport?.content) {
-    elements.reportOutput.textContent = cachedReport.content;
-    setStatus(`当前数据未变化，已显示缓存知识图谱，生成时间：${formatDateTime(cachedReport.generatedAt)}。`);
+    renderReportMarkdown(cachedReport.content);
+    setSummaryStale(false);
+    setStatus(`图谱没有变化，已显示缓存摘要，生成时间：${formatDateTime(cachedReport.generatedAt)}。`);
     return;
   }
 
+  setSummaryCollapsed(false);
   setBusy(true);
   startKnowledgeGenerationTimer();
   resetKnowledgeStreamPreview();
@@ -205,18 +914,20 @@ async function handleGenerateReport() {
       messagesByThread: state.messagesByThread,
       summaries: state.summaries,
       userPrompt: elements.userPrompt.value,
+      graph: createGraphSignaturePayload({ nodes: getGraphNodes(), edges: getGraphEdges() }),
       timeoutMs: KNOWLEDGE_GENERATION_TIMEOUT_MS,
       onDelta: appendKnowledgeReportDelta
     });
+
     if (!result.ok) {
       const elapsedSeconds = stopKnowledgeGenerationTimer();
       restoreKnowledgeReportAfterFailedStream(cachedReport);
       if (result.cancelled) {
-        setStatus(`知识图谱生成已取消，最终耗时：${formatElapsedSeconds(elapsedSeconds)}。未覆盖上次缓存结果。`);
+        setStatus(`摘要生成已取消，最终耗时：${formatElapsedSeconds(elapsedSeconds)}。未覆盖上次缓存结果。`);
         return;
       }
       const reason = result.error || "模型请求没有成功";
-      setStatus(`知识图谱生成失败，最终耗时：${formatElapsedSeconds(elapsedSeconds)}。${reason}。未覆盖上次缓存结果。`);
+      setStatus(`摘要生成失败，最终耗时：${formatElapsedSeconds(elapsedSeconds)}。${reason}。未覆盖上次缓存结果。`);
       return;
     }
 
@@ -237,122 +948,20 @@ async function handleGenerateReport() {
     };
     await dbPut("documents", nextDocument);
     state.documentRecord = nextDocument;
-    finishKnowledgeStreamPreview();
-    elements.reportOutput.textContent = result.content;
+    renderReportMarkdown(result.content);
+    elements.summaryMeta.textContent = `摘要生成时间：${formatDateTime(savedAt)}`;
+    setSummaryStale(false);
     const elapsedSeconds = stopKnowledgeGenerationTimer();
-    setStatus(`知识图谱已生成，时间：${formatDateTime(savedAt)}，最终耗时：${formatElapsedSeconds(elapsedSeconds)}。`);
+    setStatus(`摘要已生成，时间：${formatDateTime(savedAt)}，最终耗时：${formatElapsedSeconds(elapsedSeconds)}。`);
   } catch (error) {
     const elapsedSeconds = stopKnowledgeGenerationTimer();
     restoreKnowledgeReportAfterFailedStream(cachedReport);
     const reason = error instanceof Error ? error.message : String(error);
-    setStatus(`知识图谱生成失败，最终耗时：${formatElapsedSeconds(elapsedSeconds)}。${reason}。未覆盖上次缓存结果。`);
+    setStatus(`摘要生成失败，最终耗时：${formatElapsedSeconds(elapsedSeconds)}。${reason}。未覆盖上次缓存结果。`);
   } finally {
     stopKnowledgeGenerationTimer();
     setBusy(false);
   }
-}
-
-async function handlePromptInput() {
-  const cachedReport = state.documentRecord?.knowledgeReport;
-  if (!cachedReport?.content) {
-    return;
-  }
-
-  const signature = await createCurrentSignature();
-  if (cachedReport.signature === signature) {
-    setStatus(`当前数据未变化，已显示缓存知识图谱，生成时间：${formatDateTime(cachedReport.generatedAt)}。`);
-    return;
-  }
-
-  setStatus("知识图谱 prompt 已变化，请点击生成知识图谱。");
-}
-
-function renderDocumentState() {
-  elements.documentTitle.textContent = state.documentRecord?.title || "未命名文档";
-  elements.highlightCount.textContent = String(state.highlights.length);
-  elements.threadCount.textContent = String(state.threads.length);
-  elements.messageCount.textContent = String(getMessageCount());
-  elements.summaryCount.textContent = String(state.summaries.length);
-  renderEvidenceList();
-}
-
-function renderEvidenceList() {
-  elements.evidenceList.replaceChildren();
-  const items = createEvidenceItems();
-  if (!items.length) {
-    const empty = document.createElement("p");
-    empty.className = "evidence-empty";
-    empty.textContent = "暂无阅读证据。先在 PDF 中划线并提问，知识图谱会读取这些记录。";
-    elements.evidenceList.append(empty);
-    return;
-  }
-
-  for (const item of items.slice(0, 60)) {
-    const article = document.createElement("article");
-    article.className = "evidence-item";
-
-    const title = document.createElement("h3");
-    title.className = "evidence-item-title";
-    title.textContent = item.thread?.title || createEvidenceTitle(item.highlight?.text);
-
-    const text = document.createElement("p");
-    text.className = "evidence-item-text";
-    text.textContent = createEvidenceSnippet(item.highlight?.text || item.thread?.title || "");
-
-    const meta = document.createElement("div");
-    meta.className = "evidence-item-meta";
-    meta.textContent = createEvidenceMeta(item);
-
-    article.append(title, text, meta);
-
-    const latestSummary = item.summaries.at(-1);
-    if (latestSummary?.text) {
-      const summaryPreview = document.createElement("p");
-      summaryPreview.className = "evidence-item-summary";
-      summaryPreview.textContent = `摘要：${createEvidenceSnippet(latestSummary.text, 140)}`;
-      article.append(summaryPreview);
-    }
-
-    elements.evidenceList.append(article);
-  }
-}
-
-function createEvidenceItems() {
-  const highlightsById = new Map(state.highlights.map((highlight) => [highlight.id, highlight]));
-  const threadIds = new Set();
-  const summariesByThreadId = groupSummariesByThreadId(state.summaries);
-  const items = [];
-
-  for (const thread of state.threads) {
-    threadIds.add(thread.id);
-    items.push({
-      type: "thread",
-      highlight: highlightsById.get(thread.highlightId) || null,
-      thread,
-      messages: state.messagesByThread[thread.id] || [],
-      summaries: summariesByThreadId.get(thread.id) || []
-    });
-  }
-
-  for (const highlight of state.highlights) {
-    if (highlight.threadId && threadIds.has(highlight.threadId)) {
-      continue;
-    }
-    const linkedThread = state.threads.find((thread) => thread.highlightId === highlight.id);
-    if (linkedThread && threadIds.has(linkedThread.id)) {
-      continue;
-    }
-    items.push({
-      type: "highlight",
-      highlight,
-      thread: null,
-      messages: [],
-      summaries: []
-    });
-  }
-
-  const blocksById = new Map(state.blocks.map((block) => [block.id, block]));
-  return items.sort((a, b) => compareEvidenceItems(a, b, blocksById));
 }
 
 async function createCurrentSignature() {
@@ -364,38 +973,9 @@ async function createCurrentSignature() {
     messagesByThread: state.messagesByThread,
     summaries: state.summaries,
     userPrompt: elements.userPrompt.value,
+    graph: createGraphSignaturePayload({ nodes: getGraphNodes(), edges: getGraphEdges() }),
     settings
   });
-}
-
-function getMessageCount() {
-  return Object.values(state.messagesByThread).reduce((total, messages) => total + messages.length, 0);
-}
-
-function createEvidenceTitle(text) {
-  const normalized = normalizeWhitespace(text);
-  return normalized ? createEvidenceSnippet(normalized, 34) : "未命名划线";
-}
-
-function createEvidenceSnippet(text, limit = 180) {
-  const normalized = normalizeWhitespace(text);
-  if (!normalized) {
-    return "没有文本。";
-  }
-  return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized;
-}
-
-function createEvidenceMeta({ highlight, thread, messages, summaries }) {
-  const messageCount = (messages || []).length;
-  const qaMessages = (messages || []).filter((message) => message.role !== "selection");
-  const qaTurns = Math.floor(qaMessages.length / 2);
-  const parts = [
-    messageCount ? `${messageCount} 条问答对话消息` : "暂无问答对话消息",
-    qaTurns ? `${qaTurns} 轮用户/AI 问答` : "尚未提问",
-    summaries?.length ? `${summaries.length} 条摘要` : "暂无摘要",
-    formatDateTime(thread?.updatedAt || highlight?.updatedAt || highlight?.createdAt)
-  ];
-  return parts.filter(Boolean).join(" · ");
 }
 
 async function getLatestSettings() {
@@ -407,155 +987,90 @@ async function getLatestSettings() {
   return state.settings || {};
 }
 
-function sortHighlightsByPosition(highlights, blocks) {
-  const blocksById = new Map(blocks.map((block) => [block.id, block]));
-  return [...highlights].sort((a, b) => {
-    const blockA = blocksById.get(a.blockId);
-    const blockB = blocksById.get(b.blockId);
-    const blockOrderA = Number.isFinite(a.blockOrder) ? a.blockOrder : blockA?.order ?? Number.MAX_SAFE_INTEGER;
-    const blockOrderB = Number.isFinite(b.blockOrder) ? b.blockOrder : blockB?.order ?? Number.MAX_SAFE_INTEGER;
-    const startA = getHighlightStartOffset(a, blockA);
-    const startB = getHighlightStartOffset(b, blockB);
-    return blockOrderA - blockOrderB || startA - startB || String(a.createdAt).localeCompare(String(b.createdAt));
+/* ------------------------------------------------------------------- layout UI */
+
+function restoreUiState() {
+  const storage = globalThis.chrome?.storage?.local;
+  if (!storage) {
+    applyUiState();
+    return;
+  }
+
+  storage.get(KNOWLEDGE_UI_KEY).then((result) => {
+    const ui = result?.[KNOWLEDGE_UI_KEY] || {};
+    state.summaryCollapsed = Boolean(ui.summaryCollapsed);
+    state.chatCollapsed = Boolean(ui.chatCollapsed);
+    state.evidenceCollapsed = ui.evidenceCollapsed !== false;
+    applyUiState();
   });
 }
 
-function sortThreadsByHighlightPosition(threads, highlights, blocks) {
-  const highlightsById = new Map(highlights.map((highlight) => [highlight.id, highlight]));
-  const blocksById = new Map(blocks.map((block) => [block.id, block]));
-  return [...threads].sort((a, b) => {
-    const highlightA = highlightsById.get(a.highlightId);
-    const highlightB = highlightsById.get(b.highlightId);
-    return (
-      compareHighlightPositions(highlightA, highlightB, blocksById) ||
-      String(a.updatedAt || a.createdAt || "").localeCompare(String(b.updatedAt || b.createdAt || "")) ||
-      String(a.id || "").localeCompare(String(b.id || ""))
-    );
+function persistUiState() {
+  const storage = globalThis.chrome?.storage?.local;
+  const result = storage?.set({
+    [KNOWLEDGE_UI_KEY]: {
+      summaryCollapsed: state.summaryCollapsed,
+      chatCollapsed: state.chatCollapsed,
+      evidenceCollapsed: state.evidenceCollapsed
+    }
   });
+  result?.catch?.(() => {});
 }
 
-function compareHighlightPositions(a, b, blocksById) {
-  if (!a && !b) {
-    return 0;
-  }
-  if (!a) {
-    return 1;
-  }
-  if (!b) {
-    return -1;
-  }
-  const blockA = blocksById.get(a.blockId);
-  const blockB = blocksById.get(b.blockId);
-  const blockOrderA = Number.isFinite(a.blockOrder) ? a.blockOrder : blockA?.order ?? Number.MAX_SAFE_INTEGER;
-  const blockOrderB = Number.isFinite(b.blockOrder) ? b.blockOrder : blockB?.order ?? Number.MAX_SAFE_INTEGER;
-  return blockOrderA - blockOrderB || getHighlightStartOffset(a, blockA) - getHighlightStartOffset(b, blockB);
+function applyUiState() {
+  elements.summaryPanel.dataset.collapsed = String(state.summaryCollapsed);
+  elements.summaryToggle.setAttribute("aria-expanded", String(!state.summaryCollapsed));
+  elements.summaryToggle.title = state.summaryCollapsed ? "展开摘要" : "收起摘要";
+  elements.chatPanel.dataset.collapsed = String(state.chatCollapsed);
+  elements.chatCollapseButton.setAttribute("aria-expanded", String(!state.chatCollapsed));
+  elements.chatCollapseButton.title = state.chatCollapsed ? "展开问答窗口" : "收起问答窗口";
+  elements.evidenceDrawer.dataset.collapsed = String(state.evidenceCollapsed);
+  elements.evidenceToggle.setAttribute("aria-expanded", String(!state.evidenceCollapsed));
 }
 
-function compareEvidenceItems(a, b, blocksById) {
-  const highlightCompare = compareHighlightPositions(a.highlight, b.highlight, blocksById);
-  if (highlightCompare) {
-    return highlightCompare;
-  }
-  return String(a.thread?.createdAt || a.highlight?.createdAt || "").localeCompare(
-    String(b.thread?.createdAt || b.highlight?.createdAt || "")
-  );
+function setSummaryCollapsed(collapsed) {
+  state.summaryCollapsed = collapsed;
+  applyUiState();
+  persistUiState();
 }
 
-function getHighlightStartOffset(highlight, block) {
-  if (Number.isFinite(highlight?.globalStartOffset)) {
-    return highlight.globalStartOffset;
-  }
-  if (Number.isFinite(highlight?.startOffset)) {
-    return highlight.startOffset;
-  }
-  if (Number.isFinite(highlight?.localStartOffset)) {
-    return highlight.localStartOffset;
-  }
-  const text = getBlockText(block);
-  const selected = String(highlight?.text || "").trim();
-  const index = selected ? text.indexOf(selected) : -1;
-  return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+function setChatCollapsed(collapsed) {
+  state.chatCollapsed = collapsed;
+  applyUiState();
+  persistUiState();
 }
 
-function sortMessages(messages) {
-  return [...messages].sort((a, b) =>
-    String(a.createdAt || "").localeCompare(String(b.createdAt || "")) ||
-    String(a.id || "").localeCompare(String(b.id || ""))
-  );
+function setEvidenceCollapsed(collapsed) {
+  state.evidenceCollapsed = collapsed;
+  applyUiState();
+  persistUiState();
 }
 
-function sortSummaries(summaries) {
-  return [...summaries].sort((a, b) =>
-    String(a.createdAt || "").localeCompare(String(b.createdAt || "")) ||
-    String(a.id || "").localeCompare(String(b.id || ""))
-  );
+function handleGlobalKeydown(event) {
+  if (event.key === "Escape") {
+    closeEdgePopover();
+    closeNodeDetail();
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && !isTypingTarget(event.target)) {
+    event.preventDefault();
+    void handleUndo();
+  }
 }
 
-function groupSummariesByThreadId(summaries) {
-  const grouped = new Map();
-  for (const summary of sortSummaries(summaries)) {
-    if (!summary?.threadId) {
-      continue;
-    }
-    const list = grouped.get(summary.threadId) || [];
-    list.push(summary);
-    grouped.set(summary.threadId, list);
-  }
-  return grouped;
+function isTypingTarget(target) {
+  const tagName = target?.tagName;
+  return tagName === "INPUT" || tagName === "TEXTAREA" || target?.isContentEditable;
 }
 
-function getBlockText(block) {
-  if (!block) {
-    return "";
-  }
-  if (block.type === "list" && Array.isArray(block.items)) {
-    return block.items.join("\n");
-  }
-  if (block.type === "image") {
-    return String(block.caption || block.alt || "");
-  }
-  if (block.type === "table_html") {
-    return String(block.text || block.caption || tableHtmlToPlainText(block.table_html || block.tableHtml || ""));
-  }
-  return String(block.text || block.content || block.title || block.caption || block.table_html || block.tableHtml || "");
-}
-
-function tableHtmlToPlainText(value) {
-  const parser = new DOMParser();
-  const parsed = parser.parseFromString(String(value || ""), "text/html");
-  const table = parsed.querySelector("table");
-  if (!table) {
-    return parsed.body.textContent || "";
-  }
-
-  const parts = [];
-  const caption = table.querySelector("caption")?.textContent?.trim();
-  if (caption) {
-    parts.push(caption);
-  }
-
-  for (const row of table.querySelectorAll("tr")) {
-    const cells = [...row.querySelectorAll("th,td")]
-      .map((cell) => cell.textContent?.trim() || "")
-      .filter(Boolean);
-    if (cells.length) {
-      parts.push(cells.join(" "));
-    }
-  }
-  return parts.join("\n");
-}
-
-function normalizeWhitespace(value) {
-  return String(value || "").replace(/\s+/g, " ").trim();
-}
+/* ------------------------------------------------------- generation progress */
 
 function resetKnowledgeStreamPreview() {
   generationProgress.streamContent = "";
   generationProgress.streamRenderedContent = "";
   generationProgress.streamRenderQueued = false;
   elements.reportOutput.classList.add("report-output-streaming");
-  elements.reportOutput.classList.remove("report-output-incomplete");
-  elements.reportOutput.textContent = "正在等待模型开始输出知识图谱...";
+  elements.reportOutput.textContent = "正在等待模型开始输出摘要...";
 }
 
 function appendKnowledgeReportDelta(delta) {
@@ -584,29 +1099,25 @@ function renderKnowledgeStreamPreview() {
     return;
   }
   generationProgress.streamRenderedContent = content;
-  elements.reportOutput.textContent = content || "正在等待模型开始输出知识图谱...";
-}
-
-function finishKnowledgeStreamPreview(options = {}) {
-  generationProgress.streamRenderQueued = false;
-  renderKnowledgeStreamPreview();
-  elements.reportOutput.classList.remove("report-output-streaming");
-  elements.reportOutput.classList.toggle("report-output-incomplete", Boolean(options.incomplete));
+  elements.reportOutput.textContent = content || "正在等待模型开始输出摘要...";
 }
 
 function restoreKnowledgeReportAfterFailedStream(cachedReport) {
   generationProgress.streamContent = "";
   generationProgress.streamRenderedContent = "";
   generationProgress.streamRenderQueued = false;
-  elements.reportOutput.classList.remove("report-output-streaming", "report-output-incomplete");
-  elements.reportOutput.textContent =
-    cachedReport?.content ||
-    "暂无可用的最终知识图谱。生成中断后已丢弃临时流式内容，请再次生成。";
+  elements.reportOutput.classList.remove("report-output-streaming");
+  if (cachedReport?.content) {
+    renderReportMarkdown(cachedReport.content);
+    return;
+  }
+  elements.reportOutput.textContent = "暂无可用的摘要。生成中断后已丢弃临时流式内容，请再次生成。";
 }
 
 function setBusy(isBusy, message = "") {
   const locked = isBusy || isKnowledgeGenerating() || !documentId;
-  elements.generateButton.disabled = locked;
+  elements.regenerateButton.disabled = locked;
+  elements.staleRegenerateButton.disabled = locked;
   elements.reloadButton.disabled = locked;
   if (message) {
     setStatus(message);
@@ -619,22 +1130,6 @@ function setStatus(message) {
 
 function isKnowledgeGenerating() {
   return Boolean(generationProgress.timerId || generationProgress.startedAtMs);
-}
-
-function captureKnowledgeScrollState() {
-  return {
-    x: window.scrollX,
-    y: window.scrollY
-  };
-}
-
-function restoreKnowledgeScrollState(scrollState) {
-  if (!scrollState) {
-    return;
-  }
-  requestAnimationFrame(() => {
-    window.scrollTo(scrollState.x, scrollState.y);
-  });
 }
 
 function startKnowledgeGenerationTimer() {
@@ -658,7 +1153,7 @@ function updateKnowledgeGenerationStatus() {
   const elapsedSeconds = getKnowledgeGenerationElapsedSeconds();
   const startedAt = formatRunStartTime(generationProgress.startedAtMs);
   const stage = getKnowledgeGenerationStage(elapsedSeconds);
-  setStatus(`正在生成知识图谱。开始时间：${startedAt}；已用：${formatElapsedSeconds(elapsedSeconds)}；阶段：${stage}。`);
+  setStatus(`正在生成摘要。开始时间：${startedAt}；已用：${formatElapsedSeconds(elapsedSeconds)}；阶段：${stage}。`);
 }
 
 function getKnowledgeGenerationElapsedSeconds() {
@@ -672,6 +1167,28 @@ function getKnowledgeGenerationStage(elapsedSeconds) {
   return KNOWLEDGE_GENERATION_STAGES.reduce((current, stage) => {
     return elapsedSeconds >= stage.minElapsedSeconds ? stage.label : current;
   }, KNOWLEDGE_GENERATION_STAGES[0].label);
+}
+
+/* ------------------------------------------------------------------- helpers */
+
+function getMessageCount() {
+  return Object.values(state.messagesByThread).reduce((total, messages) => total + messages.length, 0);
+}
+
+function sortSummaries(summaries) {
+  return [...summaries].sort(
+    (a, b) =>
+      String(a.createdAt || "").localeCompare(String(b.createdAt || "")) ||
+      String(a.id || "").localeCompare(String(b.id || ""))
+  );
+}
+
+function createSnippet(text, limit = 120) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "没有文本。";
+  }
+  return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized;
 }
 
 function formatElapsedSeconds(seconds) {

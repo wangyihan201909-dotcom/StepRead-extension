@@ -30,6 +30,19 @@ const STORE_DEFINITIONS = {
     ["by_messageId", "messageId", { unique: false }],
     ["by_createdAt", "createdAt", { unique: false }]
   ],
+  graphNodes: [
+    ["by_documentId", "documentId", { unique: false }],
+    ["by_sourceKey", "sourceKey", { unique: false }]
+  ],
+  graphEdges: [
+    ["by_documentId", "documentId", { unique: false }],
+    ["by_fromNodeId", "fromNodeId", { unique: false }],
+    ["by_toNodeId", "toNodeId", { unique: false }]
+  ],
+  graphChatMessages: [
+    ["by_documentId", "documentId", { unique: false }],
+    ["by_createdAt", "createdAt", { unique: false }]
+  ],
   aiRuns: [
     ["by_threadId", "threadId", { unique: false }],
     ["by_createdAt", "createdAt", { unique: false }]
@@ -42,6 +55,8 @@ const STORE_DEFINITIONS = {
     ["by_createdAt", "createdAt", { unique: false }]
   ]
 };
+
+const GRAPH_STORE_NAMES = ["graphNodes", "graphEdges", "graphChatMessages"];
 
 let dbPromise;
 
@@ -170,7 +185,10 @@ export async function deletePendingPdfImport(importId) {
 export async function deleteDocumentReadingHistory(documentId) {
   const db = await openReaderDb();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(["highlights", "threads", "messages", "summaries", "aiRuns"], "readwrite");
+    const tx = db.transaction(
+      ["highlights", "threads", "messages", "summaries", "aiRuns", ...GRAPH_STORE_NAMES],
+      "readwrite"
+    );
     const highlightStore = tx.objectStore("highlights");
     const threadStore = tx.objectStore("threads");
     const messageStore = tx.objectStore("messages");
@@ -182,9 +200,13 @@ export async function deleteDocumentReadingHistory(documentId) {
       threads: 0,
       messages: 0,
       summaries: 0,
-      aiRuns: 0
+      aiRuns: 0,
+      graphNodes: 0,
+      graphEdges: 0,
+      graphChatMessages: 0
     };
 
+    deleteGraphRecordsByDocument(tx, documentId, summary);
     deleteKeysByIndex(highlightStore, "by_documentId", documentId, (count) => {
       summary.highlights = count;
     });
@@ -306,7 +328,7 @@ export async function deleteDocumentCascade(documentId) {
   const db = await openReaderDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(
-      ["documents", "blocks", "highlights", "threads", "messages", "summaries", "aiRuns"],
+      ["documents", "blocks", "highlights", "threads", "messages", "summaries", "aiRuns", ...GRAPH_STORE_NAMES],
       "readwrite"
     );
     const documentStore = tx.objectStore("documents");
@@ -324,7 +346,10 @@ export async function deleteDocumentCascade(documentId) {
       threads: 0,
       messages: 0,
       summaries: 0,
-      aiRuns: 0
+      aiRuns: 0,
+      graphNodes: 0,
+      graphEdges: 0,
+      graphChatMessages: 0
     };
 
     const documentRequest = documentStore.get(documentId);
@@ -335,6 +360,7 @@ export async function deleteDocumentCascade(documentId) {
 
       summary.deleted = true;
       documentStore.delete(documentId);
+      deleteGraphRecordsByDocument(tx, documentId, summary);
       deleteKeysByIndex(blockStore, "by_documentId", documentId, (count) => {
         summary.blocks = count;
       });
@@ -399,6 +425,14 @@ export async function replaceDocument(document, blocks) {
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
   });
+}
+
+function deleteGraphRecordsByDocument(tx, documentId, summary) {
+  for (const storeName of GRAPH_STORE_NAMES) {
+    deleteKeysByIndex(tx.objectStore(storeName), "by_documentId", documentId, (count) => {
+      summary[storeName] = count;
+    });
+  }
 }
 
 function deleteKeysByIndex(store, indexName, value, onCount) {
