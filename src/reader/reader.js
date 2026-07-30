@@ -4,6 +4,7 @@ import {
   dbGetAll,
   dbGetAllByIndex,
   dbPut,
+  clearDocumentConversation,
   clearReaderRecords,
   deletePendingPdfImport,
   deleteHighlightsCascade,
@@ -126,6 +127,7 @@ const elements = {
   qaPanelTitle: document.querySelector("#qaPanelTitle"),
   detailLayer: document.querySelector("#detailLayer"),
   knowledgeButton: document.querySelector("#knowledgeButton"),
+  clearConversationButton: document.querySelector("#clearConversationButton"),
   selectionAskButton: document.querySelector("#selectionAskButton"),
   documentsTab: document.querySelector("#documentsTab"),
   tocTab: document.querySelector("#tocTab"),
@@ -383,6 +385,7 @@ function bindEvents() {
   elements.documentsTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.tocTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.knowledgeButton.addEventListener("click", openKnowledgePage);
+  elements.clearConversationButton.addEventListener("click", handleClearConversation);
   elements.sendQuestionButton.addEventListener("click", handleQuestionButtonClick);
   elements.messageList.addEventListener("click", handleMessageListClick);
   elements.pathCanvasButton.addEventListener("click", openPathCanvas);
@@ -7169,6 +7172,81 @@ async function openDraftQuestion() {
   elements.questionInput.focus();
   pulseSelectionChip();
   setStatus("已带上这段划线；发送后会另开一条划线问答，当前对话不受影响。");
+}
+
+/*
+ * 清空对话记录。删除是不可逆的，所以要点两次：第一次把按钮变成「确认清空」，
+ * 5 秒内不再点就自动取消。删的是划线/thread/消息/摘要/AI 运行日志，
+ * 手工策展的知识图谱切片保留 —— 失去来源的切片会被标成孤立，而不是消失。
+ */
+let clearConversationTimer = 0;
+
+function disarmClearConversation() {
+  window.clearTimeout(clearConversationTimer);
+  clearConversationTimer = 0;
+  if (!elements.clearConversationButton) {
+    return;
+  }
+  elements.clearConversationButton.classList.remove("armed");
+  elements.clearConversationButton.textContent = "🗑";
+  elements.clearConversationButton.title = "清空这份文档的对话记录";
+}
+
+async function handleClearConversation() {
+  if (!state.currentDocument?.id) {
+    setStatus("请先打开一份文档。");
+    return;
+  }
+
+  const roundCount = state.roundTree?.rounds?.length || 0;
+  if (!roundCount) {
+    disarmClearConversation();
+    setStatus("这份文档还没有对话记录。");
+    return;
+  }
+
+  if (!clearConversationTimer) {
+    clearConversationTimer = window.setTimeout(() => {
+      disarmClearConversation();
+      setStatus("已取消清空。");
+    }, 5000);
+    elements.clearConversationButton.classList.add("armed");
+    elements.clearConversationButton.textContent = "确认清空";
+    elements.clearConversationButton.title = "再点一次就会删除，5 秒内不点则取消";
+    setStatus(
+      `再点一次会删除这份文档的 ${roundCount} 轮对话和对应划线；知识图谱里已放置的切片会保留。5 秒内不点则取消。`
+    );
+    return;
+  }
+
+  disarmClearConversation();
+  if (state.activeAnswerRun) {
+    await stopActiveAnswerRun();
+  }
+
+  const documentId = state.currentDocument.id;
+  const summary = await clearDocumentConversation(documentId);
+  await logTask("document.conversation.cleared", { documentId, ...summary });
+
+  state.highlights = [];
+  state.threads = [];
+  state.activeThread = null;
+  state.activeHighlight = null;
+  state.activeRoundId = "";
+  state.roundTree = null;
+  state.editingQuestion = null;
+  clearDraftSelection();
+  elements.questionInput.value = "";
+  hideSelectionAskButton();
+  closePathCanvas();
+  notifyKnowledgeDataChanged("conversation-cleared");
+
+  refreshDocumentHighlights();
+  renderSelection();
+  await renderMessages();
+  setStatus(
+    `已清空：${summary.threads} 条问答、${summary.messages} 条消息、${summary.highlights} 条划线、${summary.summaries} 条摘要。知识图谱切片未删除。`
+  );
 }
 
 async function openKnowledgePage() {

@@ -575,18 +575,34 @@ textarea {
   overflow-x: hidden;
 }
 
+/* 改成 flex：按钮增减不再受固定列数约束（原来是三列栅格） */
 .qa-header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: 8px;
   margin: -2px 0 14px;
 }
 
+/* 清空对话：待确认状态要明显到不可能误点 */
+.qa-header button.armed {
+  width: auto;
+  padding: 0 9px;
+  border-color: #b42318;
+  background: #b42318;
+  color: #ffffff;
+  font-size: var(--app-xs-font-size);
+}
+
 .qa-header h2 {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.qa-header button {
+  flex: 0 0 auto;
 }
 
 .knowledge-button {
