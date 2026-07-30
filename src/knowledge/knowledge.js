@@ -428,7 +428,7 @@ function renderEvidenceList() {
   if (!nodes.length) {
     const empty = document.createElement("p");
     empty.className = "evidence-empty";
-    empty.textContent = "暂无阅读证据。先在 PDF 中划线并提问，图谱会读取这些记录。";
+    empty.textContent = "暂无阅读证据。在 PDF 里提问（划线提问或直接对全文提问）后，图谱会读取这些记录。";
     elements.evidenceList.append(empty);
     return;
   }
