@@ -1185,34 +1185,27 @@ textarea {
   transform-origin: 0 0;
 }
 
+/*
+ * 原来画的是一条 0.36em 高、定位在 86% 的细条纹，本意是别遮住 canvas 上的字。
+ * 但 pdf.js 的文本层用替代字体整体横向缩放来匹配真实字宽，span 内部单个字符的
+ * 位置和渲染出的字形并不严格对应；一条细线会把这点漂移放大成「划错地方」。
+ * 半透明整块本身就带 alpha，字形照样透出来，观感也更像马克笔。
+ */
 .pdf-text-layer .reader-highlight {
   position: relative;
   z-index: 2;
   color: transparent;
-  background-color: transparent;
-  background-image: linear-gradient(
-    to bottom,
-    transparent 62%,
-    var(--pdf-highlight-bg) 62%,
-    var(--pdf-highlight-bg) 88%,
-    transparent 88%
-  );
-  background-position: 0 86%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.36em;
+  background-color: var(--pdf-highlight-bg);
+  background-image: none;
+  border-radius: 2px;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
   cursor: pointer;
 }
 
 .pdf-text-layer .reader-highlight-draft {
-  background-image: linear-gradient(
-    to bottom,
-    transparent 66%,
-    var(--pdf-highlight-draft-bg) 66%,
-    var(--pdf-highlight-draft-bg) 88%,
-    transparent 88%
-  );
+  background-color: var(--pdf-highlight-draft-bg);
+  background-image: none;
   text-decoration-line: underline;
   text-decoration-style: dotted;
   text-decoration-color: var(--highlight-draft-border);
@@ -1221,18 +1214,9 @@ textarea {
 }
 
 .pdf-text-layer .reader-highlight.active-highlight {
-  background-image:
-    linear-gradient(
-      to bottom,
-      transparent 56%,
-      var(--pdf-highlight-active-bg) 56%,
-      var(--pdf-highlight-active-bg) 90%,
-      transparent 90%
-    ),
-    linear-gradient(var(--highlight-active-border), var(--highlight-active-border));
-  background-position: 0 86%, 0 100%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.46em, 100% 2px;
+  background-color: var(--pdf-highlight-active-bg);
+  background-image: none;
+  box-shadow: 0 0 0 1px var(--highlight-active-border);
   text-decoration-line: none;
 }
 
@@ -1257,45 +1241,23 @@ textarea {
   color: var(--text);
 }
 
+/* 降级模式（文本层直接可见）同样改成整块，和上面保持一致 */
 .pdf-hybrid-page.pdf-text-visible-fallback .reader-highlight {
   color: var(--text);
-  background-color: transparent;
-  background-image: linear-gradient(
-    to bottom,
-    transparent 62%,
-    var(--highlight-bg) 62%,
-    var(--highlight-bg) 89%,
-    transparent 89%
-  );
-  background-position: 0 86%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.38em;
+  background-color: var(--highlight-bg);
+  background-image: none;
 }
 
 .pdf-hybrid-page.pdf-text-visible-fallback .reader-highlight-draft {
   color: var(--text);
-  background-image: linear-gradient(
-    to bottom,
-    transparent 66%,
-    var(--highlight-draft-bg) 66%,
-    var(--highlight-draft-bg) 88%,
-    transparent 88%
-  );
+  background-color: var(--highlight-draft-bg);
+  background-image: none;
 }
 
 .pdf-hybrid-page.pdf-text-visible-fallback .reader-highlight.active-highlight {
-  background-image:
-    linear-gradient(
-      to bottom,
-      transparent 56%,
-      var(--highlight-active-bg) 56%,
-      var(--highlight-active-bg) 90%,
-      transparent 90%
-    ),
-    linear-gradient(var(--highlight-active-border), var(--highlight-active-border));
-  background-position: 0 86%, 0 100%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.46em, 100% 2px;
+  background-color: var(--highlight-active-bg);
+  background-image: none;
+  box-shadow: 0 0 0 1px var(--highlight-active-border);
 }
 
 .reader-block {
