@@ -7,6 +7,7 @@ import {
   clearReaderRecords,
   deletePendingPdfImport,
   deleteHighlightsCascade,
+  deleteThreadsCascade,
   getPendingPdfImport,
   getDocumentWithBlocks,
   replaceDocument
@@ -155,6 +156,7 @@ const elements = {
 
 const QUESTION_PLACEHOLDER = "输入问题，Enter 发送，Shift+Enter 换行";
 const BRANCH_PLACEHOLDER = "从这一轮提问将新建一条支线…";
+const DOCUMENT_PLACEHOLDER = "直接提问（针对全文），或先在正文划线再问";
 const FORK_PIP_LIMIT = 5;
 const forkBadgeMemory = new Map();
 let branchPopElement = null;
@@ -745,9 +747,17 @@ async function loadDocument(documentId) {
 async function cleanupUnsubmittedThreadRecords(documentId) {
   const threads = await dbGetAllByIndex("threads", "by_documentId", documentId);
   const staleHighlightIds = [];
+  const staleThreadIds = [];
 
   for (const thread of threads) {
     if (!thread?.highlightId) {
+      // 全文提问的空草稿：正常流程下不会落库，这里兜底清掉
+      if (thread && isDraftThread(thread)) {
+        const messages = await getThreadMessages(thread.id);
+        if (!messages.some((message) => message.role === "user")) {
+          staleThreadIds.push(thread.id);
+        }
+      }
       continue;
     }
     const highlight = await dbGet("highlights", thread.highlightId);
@@ -766,7 +776,16 @@ async function cleanupUnsubmittedThreadRecords(documentId) {
     }
   }
 
-  const summary = await deleteHighlightsCascade(staleHighlightIds);
+  const highlightSummary = await deleteHighlightsCascade(staleHighlightIds);
+  const threadSummary = await deleteThreadsCascade(staleThreadIds);
+  const summary = {
+    ...highlightSummary,
+    threads: highlightSummary.threads + threadSummary.threads,
+    messages: highlightSummary.messages + threadSummary.messages,
+    summaries: highlightSummary.summaries + threadSummary.summaries,
+    aiRuns: highlightSummary.aiRuns + threadSummary.aiRuns,
+    threadIds: [...highlightSummary.threadIds, ...threadSummary.threadIds]
+  };
   if (summary.highlights || summary.threads) {
     await logTask("document.unsubmittedDrafts.cleaned", {
       documentId,
@@ -4836,12 +4855,15 @@ async function deleteReadingThread(threadId) {
   const thread =
     state.threads.find((item) => item.id === threadId) ||
     (await dbGet("threads", threadId));
-  if (!thread?.highlightId) {
+  if (!thread) {
     return;
   }
 
   const deletedActiveThread = state.activeThread?.id === thread.id;
-  const summary = await deleteHighlightsCascade([thread.highlightId]);
+  // 全文提问没有 highlight 可级联，按 thread 删
+  const summary = thread.highlightId
+    ? await deleteHighlightsCascade([thread.highlightId])
+    : { ...(await deleteThreadsCascade([thread.id])), highlightIds: [] };
   state.highlights = state.highlights.filter((highlight) => !summary.highlightIds.includes(highlight.id));
   state.threads = state.threads.filter((item) => !summary.threadIds.includes(item.id));
 
@@ -5146,6 +5168,13 @@ async function auditInvalidReadingRecords(documentId, blocks, highlights, thread
   for (const thread of threads) {
     const messages = await getThreadMessages(thread.id);
     const hasReadableThreadRecord = messages.some((message) => message.role === "user");
+    // 全文提问本来就没有 highlight，只要还有问题记录就是有效的
+    if (isDocumentScopeThread(thread)) {
+      if (!hasReadableThreadRecord) {
+        invalidThreads.push(thread);
+      }
+      continue;
+    }
     if (!highlightsById.has(thread.highlightId) || invalidHighlightIds.has(thread.highlightId) || !hasReadableThreadRecord) {
       invalidThreads.push(thread);
       if (thread.highlightId) {
@@ -5239,7 +5268,11 @@ function renderThreads() {
     if (thread.id === state.activeThread?.id) {
       button.classList.add("active");
     }
-    button.textContent = createHistoryTitle(highlight?.text || thread.title || "未命名问答");
+    const documentScope = isDocumentScopeThread(thread);
+    button.textContent = documentScope
+      ? `全文 · ${createHistoryTitle(thread.title || "全文提问")}`
+      : createHistoryTitle(highlight?.text || thread.title || "未命名问答");
+    button.title = documentScope ? "针对全文的提问（没有划线）" : highlight?.text || "";
     button.addEventListener("click", () => activateThread(thread.id));
     const showThreadMenu = (event) =>
       showDocumentContextMenu(event, {
@@ -5283,7 +5316,20 @@ function renderSelection() {
   const activeText = state.activeHighlight?.text || "";
   const text = draftText || activeText;
   if (!text) {
-    host.hidden = true;
+    // 全文提问：没有划线，但要让用户看出这一问的范围是整篇
+    if (state.activeThread && isDocumentScopeThread(state.activeThread)) {
+      const wrap = document.createElement("div");
+      wrap.className = "selection-chip-wrap selection-chip-static";
+      const label = document.createElement("span");
+      label.className = "selection-chip";
+      label.textContent = "❖ 全文提问 · 未划线";
+      label.title = "这条问答针对整篇文档；想锚定某段就先在正文划线";
+      wrap.append(label);
+      host.append(wrap);
+      host.hidden = false;
+    } else {
+      host.hidden = true;
+    }
     updateSendState();
     return;
   }
@@ -6474,54 +6520,93 @@ async function persistThreadFromSelection(options = {}) {
   return thread;
 }
 
-async function commitDraftThread() {
-  if (!isDraftThread(state.activeThread) || !isDraftHighlight(state.activeHighlight)) {
+/* 无划线提问：开一条针对全文的草稿 thread，发送后才落库 */
+async function createDocumentThread() {
+  if (!state.currentDocument) {
+    return null;
+  }
+
+  const createdAt = nowIso();
+  const thread = {
+    id: createId("thread"),
+    documentId: state.currentDocument.id,
+    highlightId: "",
+    scope: "document",
+    title: "全文提问",
+    status: "draft",
+    isDraft: true,
+    createdAt,
+    updatedAt: createdAt
+  };
+
+  state.activeHighlight = null;
+  state.activeThread = thread;
+  state.activeRoundId = "";
+  clearDraftSelection();
+  state.panelView = "detail";
+  hideSelectionAskButton();
+
+  renderThreads();
+  renderSelection();
+  renderPanelView();
+  await renderMessages();
+  return thread;
+}
+
+async function commitDraftThread(options = {}) {
+  if (!isDraftThread(state.activeThread)) {
     return;
   }
 
   const committedAt = nowIso();
-  const highlight = {
-    ...state.activeHighlight,
-    status: "active",
-    isDraft: false,
-    updatedAt: committedAt
-  };
+  const draftHighlight = isDraftHighlight(state.activeHighlight) ? state.activeHighlight : null;
+  const documentScope = !draftHighlight;
   const thread = {
     ...state.activeThread,
+    // 全文提问用第一个问题当标题，历史列表里才认得出来
+    title: documentScope && options.question
+      ? createThreadTitle(options.question)
+      : state.activeThread.title,
     status: "active",
     isDraft: false,
     updatedAt: committedAt
   };
-  const selectionMessage = {
-    id: createId("msg"),
-    threadId: thread.id,
-    role: "selection",
-    content: highlight.text,
-    createdAt: highlight.createdAt || committedAt
-  };
 
-  await Promise.all([
-    dbPut("highlights", highlight),
-    dbPut("threads", thread),
-    dbPut("messages", selectionMessage)
-  ]);
-  await logTask("highlight.thread.created", {
+  const writes = [dbPut("threads", thread)];
+  let highlight = null;
+  if (draftHighlight) {
+    highlight = {
+      ...draftHighlight,
+      status: "active",
+      isDraft: false,
+      updatedAt: committedAt
+    };
+    writes.push(dbPut("highlights", highlight));
+    writes.push(
+      dbPut("messages", {
+        id: createId("msg"),
+        threadId: thread.id,
+        role: "selection",
+        content: highlight.text,
+        createdAt: highlight.createdAt || committedAt
+      })
+    );
+  }
+
+  await Promise.all(writes);
+  await logTask(documentScope ? "document.thread.created" : "highlight.thread.created", {
     documentId: state.currentDocument.id,
-    highlightId: highlight.id,
+    highlightId: highlight?.id || "",
     threadId: thread.id,
-    globalStartOffset: highlight.globalStartOffset
+    globalStartOffset: highlight?.globalStartOffset ?? -1
   });
 
-  state.activeHighlight = highlight;
   state.activeThread = thread;
-  state.highlights = [
-    ...state.highlights.filter((item) => item.id !== highlight.id),
-    highlight
-  ];
-  state.threads = [
-    ...state.threads.filter((item) => item.id !== thread.id),
-    thread
-  ];
+  state.threads = [...state.threads.filter((item) => item.id !== thread.id), thread];
+  if (highlight) {
+    state.activeHighlight = highlight;
+    state.highlights = [...state.highlights.filter((item) => item.id !== highlight.id), highlight];
+  }
   notifyKnowledgeDataChanged("thread-created");
 }
 
@@ -6658,18 +6743,28 @@ async function sendQuestion(options = {}) {
     return;
   }
 
+  if (!state.currentDocument) {
+    setStatus("请先打开一份文档，再输入问题。");
+    return;
+  }
+
   if (!state.activeThread && state.selectedText) {
     await createThreadFromSelection({ focusInput: false });
   }
 
+  // 没有划线也能问：开一条针对全文的 thread
+  if (!state.activeThread) {
+    await createDocumentThread();
+  }
+
   if (isDraftThread(state.activeThread)) {
-    await commitDraftThread();
+    await commitDraftThread({ question });
     refreshDocumentHighlights();
     renderThreads();
   }
 
-  if (!state.activeThread || !state.activeHighlight || !state.currentDocument) {
-    setStatus("请先在正文中选中一段文字，再输入问题。");
+  if (!state.activeThread) {
+    setStatus("没能创建问答记录，请重试。");
     return;
   }
 
@@ -6691,12 +6786,12 @@ async function sendQuestion(options = {}) {
     controller: new AbortController(),
     cancelled: false,
     threadId: state.activeThread.id,
-    highlightId: state.activeHighlight.id,
+    highlightId: state.activeHighlight?.id || "",
     userMessageId: userMessage.id,
     question,
     userMessage,
     thread: { ...state.activeThread },
-    highlight: { ...state.activeHighlight },
+    highlight: state.activeHighlight ? { ...state.activeHighlight } : null,
     documentRecord: { ...state.currentDocument },
     blocks: [...state.blocks],
     highlights: [...state.highlights],
@@ -7120,16 +7215,22 @@ function isCurrentAnswerRun(answerRun) {
 function updateSendState() {
   const isRunning = Boolean(state.activeAnswerRun);
   const hasQuestion = Boolean(elements.questionInput.value.trim());
-  const hasContext = Boolean(state.activeThread || state.selectedText);
+  // 划线只是给提问附一段原文，不是提问的前提；打开了文档就能问
+  const hasContext = Boolean(state.currentDocument);
   const isEditing =
     Boolean(state.editingQuestion) &&
     Boolean(state.activeThread) &&
     state.editingQuestion.threadId === state.activeThread.id;
 
   const branching = Boolean(getActiveRound()?.children?.length);
+  const freshQuestion = !state.activeThread && !state.selectedText;
   elements.questionInput.readOnly = isRunning;
   elements.questionInput.setAttribute("aria-busy", String(isRunning));
-  elements.questionInput.placeholder = branching ? BRANCH_PLACEHOLDER : QUESTION_PLACEHOLDER;
+  elements.questionInput.placeholder = branching
+    ? BRANCH_PLACEHOLDER
+    : freshQuestion
+      ? DOCUMENT_PLACEHOLDER
+      : QUESTION_PLACEHOLDER;
   elements.composer?.classList.toggle("branching", branching);
   elements.composer?.classList.toggle("answer-running", isRunning);
   elements.sendQuestionButton.textContent = isRunning ? "停止" : isEditing ? "重新发送" : "发送";
@@ -7835,6 +7936,11 @@ function getHighlightSortPosition(highlight) {
 
 function isDraftThread(thread) {
   return Boolean(thread?.isDraft || thread?.status === "draft");
+}
+
+/* 全文提问：没有划线的 thread。旧数据一律是划线 thread。 */
+function isDocumentScopeThread(thread) {
+  return Boolean(thread) && (thread.scope === "document" || !thread.highlightId);
 }
 
 function isDraftHighlight(highlight) {

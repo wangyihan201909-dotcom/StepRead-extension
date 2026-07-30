@@ -302,6 +302,60 @@ export async function deleteHighlightsCascade(highlightIds) {
   });
 }
 
+/*
+ * 按 thread 删除。全文提问的 thread 没有 highlight，
+ * 走不了 deleteHighlightsCascade，需要一条独立的清理路径。
+ */
+export async function deleteThreadsCascade(threadIds) {
+  const uniqueThreadIds = [...new Set((Array.isArray(threadIds) ? threadIds : []).filter(Boolean))];
+  const summary = {
+    threads: 0,
+    messages: 0,
+    summaries: 0,
+    aiRuns: 0,
+    threadIds: []
+  };
+
+  if (!uniqueThreadIds.length) {
+    return summary;
+  }
+
+  const db = await openReaderDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(["threads", "messages", "summaries", "aiRuns"], "readwrite");
+    const threadStore = tx.objectStore("threads");
+    const messageStore = tx.objectStore("messages");
+    const summaryStore = tx.objectStore("summaries");
+    const aiRunStore = tx.objectStore("aiRuns");
+
+    for (const threadId of uniqueThreadIds) {
+      const threadRequest = threadStore.get(threadId);
+      threadRequest.onsuccess = () => {
+        if (!threadRequest.result) {
+          return;
+        }
+        summary.threads += 1;
+        summary.threadIds.push(threadId);
+        deleteKeysByIndex(messageStore, "by_threadId", threadId, (count) => {
+          summary.messages += count;
+        });
+        deleteKeysByIndex(summaryStore, "by_threadId", threadId, (count) => {
+          summary.summaries += count;
+        });
+        deleteKeysByIndex(aiRunStore, "by_threadId", threadId, (count) => {
+          summary.aiRuns += count;
+        });
+        threadStore.delete(threadId);
+      };
+      threadRequest.onerror = () => tx.abort();
+    }
+
+    tx.oncomplete = () => resolve(summary);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
 export async function deleteDocumentCascade(documentId) {
   const db = await openReaderDb();
   return new Promise((resolve, reject) => {

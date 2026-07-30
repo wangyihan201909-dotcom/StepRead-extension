@@ -1559,6 +1559,17 @@ figcaption {
 }
 
 .selection-chip:hover { color: var(--text); }
+
+/* 全文提问的范围标签：只是说明，不可点、不可关 */
+.selection-chip-static {
+  padding-right: 8px;
+  border-style: dashed;
+}
+
+.selection-chip-static .selection-chip {
+  cursor: default;
+  color: var(--muted);
+}
 .selection-chip .chip-icon { flex: 0 0 auto; opacity: 0.7; }
 
 .selection-chip-close {

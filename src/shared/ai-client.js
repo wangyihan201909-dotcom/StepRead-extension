@@ -991,8 +991,12 @@ function redactSecretText(value, secrets = []) {
 function buildSelectionPrompt(template, selection, question, context) {
   const baseTemplate = template || DEFAULT_SELECTION_PROMPT;
   const promptContext = prepareSelectionPromptContext(context);
+  // 全文提问没有划线。留空会让模板出现一段空的「划线原文」，
+  // 模型容易顺势编造一段原文，所以显式写明这次没有划线。
+  const selectionValue =
+    String(selection || "").trim() || "（本次没有划线，问题针对整篇文档，请基于下面的参考材料回答）";
   const rendered = baseTemplate
-    .replaceAll("{{selection}}", selection)
+    .replaceAll("{{selection}}", selectionValue)
     .replaceAll("{{question}}", question)
     .replaceAll("{{context}}", promptContext);
 
