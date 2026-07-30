@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>StepRead · 新问答侧边栏样式预览</title>
+    <!-- 直接引用真实样式表，所见即 reader 里的效果 -->
+    <link id="readerCss" rel="stylesheet" href="../src/reader/reader.css">
+    <!-- 预览页专用：绕开缓存，保证看到的是磁盘上最新的 reader.css -->
+    <script>
+      document.getElementById("readerCss").href = `../src/reader/reader.css?t=${Date.now()}`;
+    </script>
+    <style>
+      /* 只为这个静态预览搭一个外壳，不参与真实产物 */
+      body { margin: 0; }
+      .preview-bar {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        padding: 8px 14px; border-bottom: 1px solid var(--border);
+        background: var(--panel-bg); font-size: 12px; color: var(--muted);
+      }
+      .preview-bar b { color: var(--text); }
+      .preview-bar .sp { flex: 1 1 auto; }
+      .preview-shell { display: flex; height: calc(100vh - 41px); }
+      .fake-doc {
+        flex: 1 1 auto; padding: 26px; overflow: auto;
+        background: var(--page-bg); color: var(--muted);
+        font-size: 14px; line-height: 1.9;
+      }
+      .fake-doc .page {
+        max-width: 620px; margin: 0 auto; padding: 34px 38px;
+        border: 1px solid var(--border); background: var(--panel-bg);
+        box-shadow: var(--shadow-panel); color: var(--text);
+      }
+      .preview-shell .qa-panel { flex: 0 0 430px; }
+    </style>
+  </head>
+  <body>
+    <div class="preview-bar">
+      <b>静态样式预览</b>
+      <span>只验证新侧边栏的 CSS 排版（真实交互在扩展里）</span>
+      <span class="sp"></span>
+      <span>主题跟随「设置」· 点右侧窄条顶部的 <b>⤢</b> 看全屏路径图</span>
+    </div>
+
+    <div class="preview-shell">
+      <div class="fake-doc">
+        <div class="page">
+          <p>这里模拟 PDF 正文区。下面这句是被划线的句子：</p>
+          <p>
+            自注意力对输入顺序不敏感，<mark class="reader-highlight">本节的模型既没有循环层，也没有卷积层，因此顺序信息必须由外部显式补进来。</mark>
+            于是需要位置编码。
+          </p>
+        </div>
+      </div>
+
+      <aside class="qa-panel" aria-label="问答面板">
+        <header class="qa-header">
+          <button class="icon-button" type="button" title="查看历史划线">◀</button>
+          <h2>划线问答</h2>
+          <span class="path-summary">第 3 轮 / 共 6 轮</span>
+          <button type="button" class="secondary knowledge-button">知识图谱</button>
+        </header>
+
+        <section class="qa-layer qa-detail">
+          <div class="detail-body">
+            <div class="message-list chat-list round-list" id="rounds"></div>
+            <aside class="path-rail" id="rail" aria-label="对话路径">
+              <div class="path-rail-head">
+                <button class="path-rail-button" id="canvasBtn" type="button" title="全屏展开对话路径图">⤢</button>
+              </div>
+              <div class="path-rail-scroll" id="railScroll">
+                <div class="path-rail-inner" id="railInner"><svg id="railLinks"></svg></div>
+              </div>
+            </aside>
+          </div>
+
+          <footer class="composer">
+            <div class="selection-chips" id="chips"></div>
+            <div class="composer-row">
+              <textarea rows="3" placeholder="从这一轮提问将新建一条支线…"></textarea>
+              <button type="button">发送</button>
+            </div>
+          </footer>
+        </section>
+      </aside>
+    </div>
+
+    <div class="path-canvas-overlay" id="canvas" hidden>
+      <div class="path-canvas-bar">
+        <strong>对话路径</strong>
+        <span class="path-canvas-hint">拖动平移 · 滚轮缩放 · 点节点跳到那一轮 · Esc 返回</span>
+        <span class="path-canvas-spacer"></span>
+        <span class="path-canvas-hint">6 轮 · 2 个分叉</span>
+        <button type="button" class="secondary">−</button>
+        <button type="button" class="secondary">100%</button>
+        <button type="button" class="secondary">+</button>
+        <button type="button" class="secondary">回到当前</button>
+        <button type="button" id="canvasClose">返回对话</button>
+      </div>
+      <div class="path-canvas-stage" id="stage">
+        <div class="path-canvas-world" id="world"><svg id="links"></svg></div>
+      </div>
+    </div>
+
+    <script>
+      const HIGHLIGHT =
+        "本节的模型既没有循环层，也没有卷积层，因此顺序信息必须由外部显式补进来。";
+
+      const ROUNDS = [
+        {
+          q: "这句话在强调什么？",
+          a: "它在提醒一个结构性缺口：这一节的模型里没有任何按顺序推进的部件，自注意力本身对位置无感，所以顺序不会自动出现在表示里。紧接着作者给出的补法就是位置编码。",
+          forks: 3,
+          activeFork: 1
+        },
+        {
+          q: "位置编码具体怎么加进去？",
+          a: "在进入第一层之前，把一组与位置相关的向量加到词向量上，维度一致所以可以直接相加，不需要额外的融合层。后面所有层都能读到这份信息。",
+          forks: 0
+        },
+        {
+          q: "为什么用正弦函数而不是可学习嵌入？",
+          a: "函数式编码不引入参数，对训练时没见过的更长位置仍然能算出取值；可学习嵌入拟合更灵活，但长度超出训练范围就没有对应向量可用。",
+          forks: 0,
+          current: true
+        }
+      ];
+
+      const roundsHost = document.getElementById("rounds");
+
+      function forkBadge(total, activeIndex, interactive = true) {
+        const badge = document.createElement(interactive ? "button" : "span");
+        if (interactive) badge.type = "button";
+        badge.className = "fork-badge";
+        if (total <= 5) {
+          for (let i = 0; i < total; i += 1) {
+            const pip = document.createElement("span");
+            pip.className = i === activeIndex ? "fork-pip on" : "fork-pip";
+            badge.append(pip);
+          }
+        } else {
+          const num = document.createElement("span");
+          num.className = "fork-num";
+          num.textContent = `${activeIndex + 1}/${total}`;
+          badge.append(num);
+        }
+        return badge;
+      }
+
+      ROUNDS.forEach((round, index) => {
+        const article = document.createElement("article");
+        article.className = "round";
+        if (round.current) article.classList.add("round-current");
+        if (index === ROUNDS.length - 1) article.classList.add("round-last");
+
+        const main = document.createElement("div");
+        main.className = "round-main";
+
+        const question = document.createElement("div");
+        question.className = "round-question";
+        const bubble = document.createElement("p");
+        bubble.textContent = round.q;
+        question.append(bubble);
+
+        const answer = document.createElement("div");
+        answer.className = "round-answer";
+        const card = document.createElement("div");
+        card.className = "message message-assistant";
+        const role = document.createElement("span");
+        role.className = "message-role";
+        role.textContent = "gpt-4o-mini";
+        const content = document.createElement("div");
+        content.className = "message-content";
+        const p = document.createElement("p");
+        p.className = "message-paragraph";
+        p.textContent = round.a;
+        content.append(p);
+        card.append(role, content);
+        answer.append(card);
+
+        const tools = document.createElement("div");
+        tools.className = "round-tools";
+        const tag = document.createElement("span");
+        tag.className = "round-tag";
+        tag.textContent = `第 ${index + 1} 轮`;
+        tools.append(tag);
+        if (round.forks > 1) tools.append(forkBadge(round.forks, round.activeFork));
+        if (!round.current) {
+          const back = document.createElement("button");
+          back.type = "button";
+          back.className = "secondary round-mini-button";
+          back.textContent = "↩ 回到这一轮";
+          tools.append(back);
+        }
+
+        main.append(question, answer, tools);
+
+        if (round.forks > 1) {
+          const chips = document.createElement("div");
+          chips.className = "branch-chips";
+          const lead = document.createElement("span");
+          lead.className = "branch-chips-lead";
+          lead.textContent = `这一轮下面有 ${round.forks} 条线：`;
+          chips.append(lead);
+          ["位置编码具体怎么加进去…", "换成相对位置会怎样…", "旋转位置编码是另一条…"].forEach((t, i) => {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "secondary branch-chip";
+            if (i === round.activeFork) chip.classList.add("on");
+            chip.textContent = `${i === 0 ? "主线" : `支线 ${i}`} · ${t}`;
+            chips.append(chip);
+          });
+          main.append(chips);
+        }
+
+        article.append(main);
+        roundsHost.append(article);
+      });
+
+      // 右侧路径窄条
+      const LINE = [
+        { round: 1, text: ROUNDS[0].q, forks: 3, activeFork: 1 },
+        { round: 2, text: ROUNDS[1].q },
+        { round: 3, text: ROUNDS[2].q, current: true },
+        { round: 4, text: "那正弦的频率怎么选？", ahead: true },
+        { round: 5, text: "外推到 4 倍长度还准吗？", ahead: true }
+      ];
+
+      function renderRail() {
+        const inner = document.getElementById("railInner");
+        inner.querySelectorAll(".rail-dot, .fork-badge").forEach((n) => n.remove());
+        const x = 20;
+        const rowH = 44;
+        const padY = 16;
+        const aheadFrom = LINE.findIndex((r) => r.ahead);
+        const ys = LINE.map((_, i) => padY + i * rowH);
+        inner.style.height = `${ys[ys.length - 1] + padY}px`;
+
+        const splitY = ys[aheadFrom - 1];
+        document.getElementById("railLinks").innerHTML =
+          `<path class="path-rail-link on" d="M ${x} ${ys[0]} L ${x} ${splitY}" />` +
+          `<path class="path-rail-link ahead" d="M ${x} ${splitY} L ${x} ${ys[ys.length - 1]}" />`;
+
+        LINE.forEach((row, i) => {
+          const dot = document.createElement("button");
+          dot.type = "button";
+          dot.className = "rail-dot on";
+          if (row.current) dot.classList.add("current");
+          if (row.ahead) dot.classList.add("ahead");
+          dot.style.left = `${x}px`;
+          dot.style.top = `${ys[i]}px`;
+          dot.title = `第 ${row.round} 轮：${row.text}`;
+          inner.append(dot);
+
+          if (row.forks > 1) {
+            const badge = forkBadge(row.forks, row.activeFork);
+            badge.style.left = `${x + 11}px`;
+            badge.style.top = `${ys[i]}px`;
+            inner.append(badge);
+          }
+
+        });
+      }
+
+      renderRail();
+
+      // 划线小气泡
+      const chips = document.getElementById("chips");
+      const wrap = document.createElement("div");
+      wrap.className = "selection-chip-wrap";
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "selection-chip";
+      const icon = document.createElement("span");
+      icon.className = "chip-icon";
+      icon.textContent = "❝";
+      const label = document.createElement("span");
+      label.textContent = `1 条划线 · ${HIGHLIGHT.length} 字`;
+      chip.append(icon, label);
+      const pop = document.createElement("div");
+      pop.className = "selection-chip-pop";
+      pop.innerHTML =
+        '<span class="pop-label">所选文本：</span><span class="pop-text"></span>';
+      pop.querySelector(".pop-text").textContent = HIGHLIGHT;
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "selection-chip-close";
+      close.textContent = "×";
+      wrap.append(chip, pop, close);
+      chips.append(wrap);
+
+      // 画布节点
+      const NODES = [
+        { id: "n1", parent: null, round: 1, q: ROUNDS[0].q, forks: 3, activeFork: 1 },
+        { id: "n2", parent: "n1", round: 2, q: ROUNDS[1].q },
+        { id: "n3", parent: "n2", round: 3, q: ROUNDS[2].q, current: true },
+        { id: "n4", parent: "n1", round: 2, q: "换成相对位置会怎样？" },
+        { id: "n5", parent: "n1", round: 2, q: "旋转位置编码是另一条路线吗？" },
+        { id: "n6", parent: "n5", round: 3, q: "它为什么能外推更长？" }
+      ];
+      const world = document.getElementById("world");
+      const onPath = new Set(["n1", "n2", "n3"]);
+      NODES.forEach((node) => {
+        const card = document.createElement("div");
+        card.className = "path-canvas-node";
+        card.dataset.id = node.id;
+        if (onPath.has(node.id)) card.classList.add("on");
+        if (node.current) card.classList.add("current");
+
+        const open = document.createElement("button");
+        open.type = "button";
+        open.className = "node-open";
+        const r = document.createElement("span");
+        r.className = "node-round";
+        r.textContent = `第 ${node.round} 轮${node.parent ? "" : " · 起点"}`;
+        const q = document.createElement("span");
+        q.className = "node-question";
+        q.textContent = node.q;
+        open.append(r, q);
+        if (node.forks > 1) {
+          const meta = document.createElement("span");
+          meta.className = "node-meta";
+          meta.append(forkBadge(node.forks, node.activeFork, false));
+          open.append(meta);
+        }
+
+        const branch = document.createElement("button");
+        branch.type = "button";
+        branch.className = "node-branch";
+        branch.textContent = node.forks > 1 ? "⑂ 从这里开支线" : "＋ 从这里继续问";
+
+        card.append(open, branch);
+        world.append(card);
+      });
+
+      function layout() {
+        const cards = new Map();
+        world.querySelectorAll(".path-canvas-node").forEach((c) => cards.set(c.dataset.id, c));
+        const kids = (id) => NODES.filter((n) => n.parent === id);
+        const W = 216, GX = 84, GY = 20;
+        const boxes = new Map();
+        const floor = [];
+        let cursor = 0;
+        const place = (node, depth) => {
+          const card = cards.get(node.id);
+          const h = card.offsetHeight;
+          const childBoxes = kids(node.id).map((k) => place(k, depth + 1)).filter(Boolean);
+          let y;
+          if (childBoxes.length) {
+            const f = childBoxes[0], l = childBoxes[childBoxes.length - 1];
+            y = (f.y + f.h / 2 + l.y + l.h / 2) / 2 - h / 2;
+          } else {
+            y = cursor;
+            cursor += h + GY;
+          }
+          if (y < (floor[depth] || 0)) y = floor[depth];
+          floor[depth] = y + h + GY;
+          const box = { id: node.id, x: depth * (W + GX), y, w: W, h };
+          boxes.set(node.id, box);
+          return box;
+        };
+        NODES.filter((n) => !n.parent).forEach((r) => place(r, 0));
+        for (const [id, box] of boxes) {
+          const card = cards.get(id);
+          card.style.left = `${box.x}px`;
+          card.style.top = `${box.y}px`;
+        }
+        const paths = [];
+        NODES.forEach((node) => {
+          if (!node.parent) return;
+          const from = boxes.get(node.parent), to = boxes.get(node.id);
+          const x1 = from.x + from.w, y1 = from.y + from.h / 2;
+          const x2 = to.x, y2 = to.y + to.h / 2;
+          const mid = x1 + (x2 - x1) / 2;
+          const hot = onPath.has(node.id) && onPath.has(node.parent);
+          paths.push(`<path class="path-canvas-link${hot ? " on" : ""}" d="M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}" />`);
+        });
+        document.getElementById("links").innerHTML = paths.join("");
+        world.style.transform = "translate(60px, 40px) scale(1)";
+      }
+
+      document.getElementById("canvasBtn").addEventListener("click", () => {
+        document.getElementById("canvas").hidden = false;
+        layout();
+      });
+      document.querySelectorAll(".node-open, .node-branch").forEach((b) =>
+        b.addEventListener("click", () => {
+          document.getElementById("canvas").hidden = true;
+        })
+      );
+      document.getElementById("canvasClose").addEventListener("click", () => {
+        document.getElementById("canvas").hidden = true;
+      });
+    </script>
+  </body>
+</html>

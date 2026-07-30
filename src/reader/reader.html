@@ -28,12 +28,18 @@
       </header>
 
       <section id="workspace" class="workspace">
-        <aside class="sidebar" aria-label="文档和书签">
-          <section class="sidebar-section">
-            <button id="documentSectionToggle" class="section-toggle" type="button" aria-expanded="true">
+        <aside class="sidebar" aria-label="文档和目录">
+          <div class="sidebar-tabs" role="tablist" aria-label="侧边栏内容切换">
+            <button id="documentsTab" class="sidebar-tab" type="button" role="tab" aria-selected="true" aria-controls="documentsPanel" data-sidebar-tab="documents">
               <span>文档</span>
-              <span class="section-chevron">▾</span>
             </button>
+            <button id="tocTab" class="sidebar-tab" type="button" role="tab" aria-selected="false" aria-controls="tocPanel" data-sidebar-tab="toc">
+              <span>目录</span>
+              <small id="tocCount" class="sidebar-tab-count" hidden>0</small>
+            </button>
+          </div>
+
+          <section id="documentsPanel" class="sidebar-panel" role="tabpanel" aria-labelledby="documentsTab">
             <div class="document-actions">
               <button id="newFolderButton" class="secondary icon-add-button" type="button" title="新建文件夹" aria-label="新建文件夹">+</button>
             </div>
@@ -51,11 +57,8 @@
               <div id="trashList" class="trash-list" hidden></div>
             </section>
           </section>
-          <section class="sidebar-section">
-            <button id="tocSectionToggle" class="section-toggle" type="button" aria-expanded="true">
-              <span>书签</span>
-              <span class="section-chevron">▾</span>
-            </button>
+
+          <section id="tocPanel" class="sidebar-panel" role="tabpanel" aria-labelledby="tocTab" hidden>
             <p class="section-help">由标题自动生成，点击后跳转到正文对应位置。</p>
             <ol id="tocList" class="toc-list"></ol>
           </section>
@@ -80,6 +83,7 @@
           <header class="qa-header">
             <button id="panelToggleButton" class="icon-button" type="button" title="查看历史划线">◀</button>
             <h2 id="qaPanelTitle">划线问答</h2>
+            <span id="pathSummary" class="path-summary"></span>
             <button id="knowledgeButton" type="button" class="secondary knowledge-button">知识图谱</button>
           </header>
 
@@ -90,20 +94,50 @@
           </section>
 
           <section id="detailLayer" class="qa-layer qa-detail">
-            <section class="selection-card">
-              <h3 id="selectionTitle">当前划线</h3>
-              <p id="activeSelectionPreview" class="selection-preview">尚未选择正文文本。</p>
-            </section>
+            <div class="detail-body">
+              <div id="messageList" class="message-list chat-list"></div>
 
-            <div id="messageList" class="message-list chat-list"></div>
+              <aside id="pathRail" class="path-rail" aria-label="对话路径">
+                <div class="path-rail-head">
+                  <button id="pathCanvasButton" class="path-rail-button" type="button" title="全屏展开对话路径图">⤢</button>
+                </div>
+                <div id="pathRailScroll" class="path-rail-scroll">
+                  <div id="pathRailInner" class="path-rail-inner">
+                    <svg id="pathRailLinks"></svg>
+                  </div>
+                </div>
+              </aside>
+            </div>
 
             <footer class="composer">
-              <textarea id="questionInput" rows="3" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
-              <button id="sendQuestionButton" type="button" disabled>发送</button>
+              <div id="selectionChips" class="selection-chips" hidden></div>
+              <div class="composer-row">
+                <textarea id="questionInput" rows="3" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
+                <button id="sendQuestionButton" type="button" disabled>发送</button>
+              </div>
             </footer>
           </section>
         </aside>
       </section>
+
+      <div id="pathCanvasOverlay" class="path-canvas-overlay" hidden>
+        <div class="path-canvas-bar">
+          <strong>对话路径</strong>
+          <span class="path-canvas-hint">拖动平移 · 滚轮缩放 · 点节点跳到那一轮 · Esc 返回</span>
+          <span class="path-canvas-spacer"></span>
+          <span id="pathCanvasStat" class="path-canvas-hint"></span>
+          <button id="pathCanvasZoomOut" type="button" class="secondary">−</button>
+          <button id="pathCanvasZoomReset" type="button" class="secondary">100%</button>
+          <button id="pathCanvasZoomIn" type="button" class="secondary">+</button>
+          <button id="pathCanvasFit" type="button" class="secondary">回到当前</button>
+          <button id="pathCanvasClose" type="button">返回对话</button>
+        </div>
+        <div id="pathCanvasStage" class="path-canvas-stage">
+          <div id="pathCanvasWorld" class="path-canvas-world">
+            <svg id="pathCanvasLinks"></svg>
+          </div>
+        </div>
+      </div>
 
       <p id="status" class="app-status" role="status"></p>
       <menu id="documentContextMenu" class="context-menu" hidden>

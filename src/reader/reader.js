@@ -75,6 +75,10 @@ const state = {
   selectedGlobalStartOffset: -1,
   selectedGlobalEndOffset: -1,
   panelView: "detail",
+  sidebarTab: "documents",
+  activeRoundId: "",
+  roundTree: null,
+  pathCanvas: { open: false, x: 60, y: 60, scale: 1, boxes: null },
   pdfViewerZoom: 1,
   pdfZoomMode: "fit-width",
   activeTocEntryId: "",
@@ -123,18 +127,38 @@ const elements = {
   panelToggleButton: document.querySelector("#panelToggleButton"),
   knowledgeButton: document.querySelector("#knowledgeButton"),
   selectionAskButton: document.querySelector("#selectionAskButton"),
-  selectionCard: document.querySelector(".selection-card"),
-  documentSectionToggle: document.querySelector("#documentSectionToggle"),
-  tocSectionToggle: document.querySelector("#tocSectionToggle"),
-  selectionTitle: document.querySelector("#selectionTitle"),
-  activeSelectionPreview: document.querySelector("#activeSelectionPreview"),
+  documentsTab: document.querySelector("#documentsTab"),
+  tocTab: document.querySelector("#tocTab"),
+  documentsPanel: document.querySelector("#documentsPanel"),
+  tocPanel: document.querySelector("#tocPanel"),
+  tocCount: document.querySelector("#tocCount"),
+  selectionChips: document.querySelector("#selectionChips"),
   threadList: document.querySelector("#threadList"),
   messageList: document.querySelector("#messageList"),
   composer: document.querySelector(".composer"),
   questionInput: document.querySelector("#questionInput"),
   sendQuestionButton: document.querySelector("#sendQuestionButton"),
+  pathSummary: document.querySelector("#pathSummary"),
+  pathRail: document.querySelector("#pathRail"),
+  pathRailScroll: document.querySelector("#pathRailScroll"),
+  pathRailInner: document.querySelector("#pathRailInner"),
+  pathRailLinks: document.querySelector("#pathRailLinks"),
+  pathCanvasButton: document.querySelector("#pathCanvasButton"),
+  pathCanvasOverlay: document.querySelector("#pathCanvasOverlay"),
+  pathCanvasStage: document.querySelector("#pathCanvasStage"),
+  pathCanvasWorld: document.querySelector("#pathCanvasWorld"),
+  pathCanvasLinks: document.querySelector("#pathCanvasLinks"),
+  pathCanvasStat: document.querySelector("#pathCanvasStat"),
+  pathCanvasZoomReset: document.querySelector("#pathCanvasZoomReset"),
   status: document.querySelector("#status")
 };
+
+const QUESTION_PLACEHOLDER = "输入问题，Enter 发送，Shift+Enter 换行";
+const BRANCH_PLACEHOLDER = "从这一轮提问将新建一条支线…";
+const FORK_PIP_LIMIT = 5;
+const forkBadgeMemory = new Map();
+let branchPopElement = null;
+let pathCanvasPanning = null;
 
 let readerLocationUpdateFrame = 0;
 let pdfZoomRerenderTimer = 0;
@@ -271,6 +295,9 @@ function resetReaderRuntimeState() {
   state.selectedGlobalStartOffset = -1;
   state.selectedGlobalEndOffset = -1;
   state.panelView = "detail";
+  state.activeRoundId = "";
+  state.roundTree = null;
+  closePathCanvas();
   clearDraftSelection();
 }
 
@@ -281,9 +308,13 @@ function renderResetCompleteView(summary, { resetSettings = false } = {}) {
     : "阅读记录、划线、问答、summary、AI 运行日志和任务日志已清空；AI 设置与界面参数已保留。";
   elements.documentList.innerHTML = "";
   elements.tocList.innerHTML = "";
+  updateTocCount(0);
   elements.threadList.innerHTML = "";
   elements.messageList.innerHTML = "";
-  elements.activeSelectionPreview.textContent = "请重新导入 PDF 后开始新的人工验证。";
+  if (elements.selectionChips) {
+    elements.selectionChips.replaceChildren();
+    elements.selectionChips.hidden = true;
+  }
   elements.documentContent.innerHTML = "";
   const empty = document.createElement("section");
   empty.className = "empty-state";
@@ -352,15 +383,67 @@ function bindEvents() {
   elements.documentContextMenu.addEventListener("click", handleContextMenuAction);
   elements.panelToggleButton.addEventListener("click", handlePanelToggle);
   elements.selectionAskButton.addEventListener("click", openDraftQuestion);
-  elements.documentSectionToggle.addEventListener("click", () =>
-    toggleSidebarSection(elements.documentSectionToggle)
-  );
-  elements.tocSectionToggle.addEventListener("click", () =>
-    toggleSidebarSection(elements.tocSectionToggle)
-  );
+  elements.documentsTab.addEventListener("click", () => setSidebarTab("documents"));
+  elements.tocTab.addEventListener("click", () => setSidebarTab("toc"));
+  elements.documentsTab.addEventListener("keydown", handleSidebarTabKeydown);
+  elements.tocTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.knowledgeButton.addEventListener("click", openKnowledgePage);
   elements.sendQuestionButton.addEventListener("click", handleQuestionButtonClick);
   elements.messageList.addEventListener("click", handleMessageListClick);
+  elements.pathCanvasButton.addEventListener("click", openPathCanvas);
+  document.querySelector("#pathCanvasClose").addEventListener("click", closePathCanvas);
+  document.querySelector("#pathCanvasFit").addEventListener("click", centerPathCanvasOnCurrent);
+  elements.pathCanvasZoomReset.addEventListener("click", centerPathCanvasOnCurrent);
+  document
+    .querySelector("#pathCanvasZoomIn")
+    .addEventListener("click", () => zoomPathCanvas(state.pathCanvas.scale + 0.15));
+  document
+    .querySelector("#pathCanvasZoomOut")
+    .addEventListener("click", () => zoomPathCanvas(state.pathCanvas.scale - 0.15));
+  elements.pathCanvasStage.addEventListener("mousedown", (event) => {
+    if (event.target.closest(".path-canvas-node")) {
+      return;
+    }
+    pathCanvasPanning = {
+      x: event.clientX,
+      y: event.clientY,
+      originX: state.pathCanvas.x,
+      originY: state.pathCanvas.y
+    };
+    elements.pathCanvasStage.classList.add("grabbing");
+  });
+  window.addEventListener("mousemove", (event) => {
+    if (!pathCanvasPanning) {
+      return;
+    }
+    state.pathCanvas.x = pathCanvasPanning.originX + (event.clientX - pathCanvasPanning.x);
+    state.pathCanvas.y = pathCanvasPanning.originY + (event.clientY - pathCanvasPanning.y);
+    applyPathCanvasTransform();
+  });
+  window.addEventListener("mouseup", () => {
+    pathCanvasPanning = null;
+    elements.pathCanvasStage.classList.remove("grabbing");
+  });
+  elements.pathCanvasStage.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const rect = elements.pathCanvasStage.getBoundingClientRect();
+      const step = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+      zoomPathCanvas(
+        state.pathCanvas.scale * step,
+        event.clientX - rect.left,
+        event.clientY - rect.top
+      );
+    },
+    { passive: false }
+  );
+  document.addEventListener("click", (event) => {
+    if (!branchPopElement || event.target.closest(".branch-pop, .fork-badge")) {
+      return;
+    }
+    closeBranchPop();
+  });
   elements.questionInput.addEventListener("input", updateSendState);
   elements.questionInput.addEventListener("keydown", handleQuestionKeydown);
   elements.documentContent.addEventListener("mouseup", captureSelection);
@@ -3321,6 +3404,7 @@ function getTocEntryText(entry) {
 function renderToc() {
   elements.tocList.replaceChildren();
   const tocEntries = getTocEntries();
+  updateTocCount(tocEntries.length);
 
   if (!tocEntries.length) {
     const empty = document.createElement("li");
@@ -5183,12 +5267,302 @@ function renderThreads() {
   }
 }
 
+/*
+ * 划线不再占侧边栏顶部，而是变成输入框上方的小气泡；
+ * 鼠标悬停（或键盘聚焦）时才展开看划线原文。
+ */
 function renderSelection() {
+  const host = elements.selectionChips;
+  if (!host) {
+    updateSendState();
+    return;
+  }
+
+  host.replaceChildren();
   const draftText = state.selectedText || "";
   const activeText = state.activeHighlight?.text || "";
-  elements.selectionTitle.textContent = "划线区";
-  elements.activeSelectionPreview.textContent = draftText || activeText || "尚未选择正文文本。";
+  const text = draftText || activeText;
+  if (!text) {
+    host.hidden = true;
+    updateSendState();
+    return;
+  }
+
+  const isDraft = Boolean(draftText) || isDraftHighlight(state.activeHighlight);
+  const wrap = document.createElement("div");
+  wrap.className = "selection-chip-wrap";
+
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "selection-chip";
+  const icon = document.createElement("span");
+  icon.className = "chip-icon";
+  icon.textContent = "❝";
+  icon.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.textContent = `1 条划线 · ${text.length} 字${isDraft ? " · 未保存" : ""}`;
+  chip.append(icon, label);
+  chip.title = "点击定位到正文划线处";
+  chip.addEventListener("click", () => {
+    const highlightId = state.activeHighlight?.id;
+    if (highlightId) {
+      scrollHighlightIntoCenter(highlightId);
+    }
+  });
+
+  const pop = document.createElement("div");
+  pop.className = "selection-chip-pop";
+  pop.setAttribute("role", "tooltip");
+  const popLabel = document.createElement("span");
+  popLabel.className = "pop-label";
+  popLabel.textContent = "所选文本：";
+  const popText = document.createElement("span");
+  popText.className = "pop-text";
+  popText.textContent = text;
+  pop.append(popLabel, popText);
+
+  wrap.append(chip, pop);
+
+  if (isDraft) {
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "selection-chip-close";
+    close.textContent = "×";
+    close.title = "取消这条划线";
+    close.setAttribute("aria-label", "取消这条划线");
+    close.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await discardUnsubmittedDraft({ clearSelection: true, render: true });
+      setStatus("已取消这条划线草稿。");
+    });
+    wrap.append(close);
+  }
+
+  host.append(wrap);
+  host.hidden = false;
   updateSendState();
+}
+
+/* ---------- 对话路径画布：独立于知识图谱，只表达这条 thread 的分叉结构 ---------- */
+function openPathCanvas() {
+  if (!elements.pathCanvasOverlay) {
+    return;
+  }
+  closeBranchPop();
+  state.pathCanvas.open = true;
+  elements.pathCanvasOverlay.hidden = false;
+  renderPathCanvas();
+  centerPathCanvasOnCurrent();
+}
+
+function closePathCanvas() {
+  state.pathCanvas.open = false;
+  if (elements.pathCanvasOverlay) {
+    elements.pathCanvasOverlay.hidden = true;
+  }
+}
+
+/* 在过去某一轮上直接开新支线：回到那一轮并聚焦输入框 */
+function startBranchFromRound(roundId) {
+  const round = state.roundTree?.byId?.get(roundId);
+  const willBranch = Boolean(round?.children?.length);
+  closePathCanvas();
+  setActiveRound(roundId, { focusInput: true });
+  setStatus(
+    willBranch
+      ? "已回到这一轮，现在提问会新建一条支线，原来的后续不会被覆盖。"
+      : "已回到这一轮，可以继续追问。"
+  );
+}
+
+function renderPathCanvas() {
+  const world = elements.pathCanvasWorld;
+  if (!world) {
+    return;
+  }
+
+  world.querySelectorAll(".path-canvas-node").forEach((node) => node.remove());
+  elements.pathCanvasOverlay.querySelectorAll(".path-canvas-empty").forEach((node) => node.remove());
+  const tree = state.roundTree;
+  const rounds = tree?.rounds || [];
+
+  if (!rounds.length) {
+    elements.pathCanvasLinks.innerHTML = "";
+    const empty = document.createElement("p");
+    empty.className = "path-canvas-empty";
+    empty.textContent = "这条划线还没有问答。先在侧边栏提一个问题，这里会长出对话路径。";
+    elements.pathCanvasStage.append(empty);
+    elements.pathCanvasStat.textContent = "";
+    return;
+  }
+
+  const onPath = new Set(roundPath(tree, state.activeRoundId).map((round) => round.id));
+  rounds.forEach((round) => {
+    const index = roundPath(tree, round.id).length;
+    const card = document.createElement("div");
+    card.className = "path-canvas-node";
+    card.dataset.roundId = round.id;
+    if (onPath.has(round.id)) {
+      card.classList.add("on");
+    }
+    if (round.id === state.activeRoundId) {
+      card.classList.add("current");
+    }
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "node-open";
+    open.title = round.user.content || "";
+    const roundLabel = document.createElement("span");
+    roundLabel.className = "node-round";
+    roundLabel.textContent = `第 ${index} 轮${round.parentId ? "" : " · 起点"}`;
+    const question = document.createElement("span");
+    question.className = "node-question";
+    question.textContent = round.user.content || "（空问题）";
+    open.append(roundLabel, question);
+
+    if (round.children.length > 1) {
+      const meta = document.createElement("span");
+      meta.className = "node-meta";
+      const activeChildIndex = round.children.findIndex((child) => onPath.has(child.id));
+      meta.append(buildForkBadge(round, activeChildIndex, { interactive: false }));
+      open.append(meta);
+    }
+
+    open.addEventListener("click", () => {
+      closePathCanvas();
+      setActiveRound(round.id);
+    });
+
+    const branch = document.createElement("button");
+    branch.type = "button";
+    branch.className = "node-branch";
+    branch.textContent = round.children.length ? "⑂ 从这里开支线" : "＋ 从这里继续问";
+    branch.title = round.children.length
+      ? "回到这一轮并聚焦输入框，提问会新建一条支线"
+      : "回到这一轮并聚焦输入框继续追问";
+    branch.addEventListener("click", () => startBranchFromRound(round.id));
+
+    card.append(open, branch);
+    world.append(card);
+  });
+
+  layoutPathCanvas();
+  const forks = rounds.filter((round) => round.children.length > 1).length;
+  elements.pathCanvasStat.textContent = `${rounds.length} 轮 · ${forks} 个分叉`;
+}
+
+function layoutPathCanvas() {
+  const tree = state.roundTree;
+  const world = elements.pathCanvasWorld;
+  if (!tree || !world) {
+    return;
+  }
+
+  const cards = new Map();
+  world.querySelectorAll(".path-canvas-node").forEach((card) => {
+    cards.set(card.dataset.roundId, card);
+  });
+
+  const NODE_WIDTH = 216;
+  const GAP_X = 84;
+  const GAP_Y = 20;
+  const boxes = new Map();
+  const depthFloor = [];
+  let leafCursor = 0;
+
+  const place = (round, depth) => {
+    const card = cards.get(round.id);
+    if (!card) {
+      return null;
+    }
+    const height = card.offsetHeight;
+    const childBoxes = round.children.map((child) => place(child, depth + 1)).filter(Boolean);
+    let y;
+    if (childBoxes.length) {
+      const first = childBoxes[0];
+      const last = childBoxes[childBoxes.length - 1];
+      y = (first.y + first.h / 2 + last.y + last.h / 2) / 2 - height / 2;
+    } else {
+      y = leafCursor;
+      leafCursor += height + GAP_Y;
+    }
+    const floor = depthFloor[depth] || 0;
+    if (y < floor) {
+      y = floor;
+    }
+    depthFloor[depth] = y + height + GAP_Y;
+    const box = { id: round.id, x: depth * (NODE_WIDTH + GAP_X), y, w: NODE_WIDTH, h: height };
+    boxes.set(round.id, box);
+    return box;
+  };
+
+  for (const root of tree.roots) {
+    place(root, 0);
+  }
+
+  for (const [id, box] of boxes) {
+    const card = cards.get(id);
+    card.style.left = `${box.x}px`;
+    card.style.top = `${box.y}px`;
+  }
+
+  const onPath = new Set(roundPath(tree, state.activeRoundId).map((round) => round.id));
+  const paths = [];
+  for (const round of tree.rounds) {
+    if (!round.parentId) {
+      continue;
+    }
+    const from = boxes.get(round.parentId);
+    const to = boxes.get(round.id);
+    if (!from || !to) {
+      continue;
+    }
+    const x1 = from.x + from.w;
+    const y1 = from.y + from.h / 2;
+    const x2 = to.x;
+    const y2 = to.y + to.h / 2;
+    const mid = x1 + (x2 - x1) / 2;
+    const hot = onPath.has(round.id) && onPath.has(round.parentId);
+    paths.push(
+      `<path class="path-canvas-link${hot ? " on" : ""}" d="M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}" />`
+    );
+  }
+  elements.pathCanvasLinks.innerHTML = paths.join("");
+  state.pathCanvas.boxes = boxes;
+  applyPathCanvasTransform();
+}
+
+function applyPathCanvasTransform() {
+  const { x, y, scale } = state.pathCanvas;
+  elements.pathCanvasWorld.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+  elements.pathCanvasZoomReset.textContent = `${Math.round(scale * 100)}%`;
+}
+
+function centerPathCanvasOnCurrent() {
+  const box = state.pathCanvas.boxes?.get(state.activeRoundId);
+  const rect = elements.pathCanvasStage.getBoundingClientRect();
+  state.pathCanvas.scale = 1;
+  if (box) {
+    state.pathCanvas.x = rect.width / 2 - (box.x + box.w / 2);
+    state.pathCanvas.y = rect.height / 2 - (box.y + box.h / 2);
+  } else {
+    state.pathCanvas.x = 60;
+    state.pathCanvas.y = 60;
+  }
+  applyPathCanvasTransform();
+}
+
+function zoomPathCanvas(nextScale, originX, originY) {
+  const clamped = Math.max(0.35, Math.min(2.2, nextScale));
+  const rect = elements.pathCanvasStage.getBoundingClientRect();
+  const px = Number.isFinite(originX) ? originX : rect.width / 2;
+  const py = Number.isFinite(originY) ? originY : rect.height / 2;
+  const ratio = clamped / state.pathCanvas.scale;
+  state.pathCanvas.x = px - (px - state.pathCanvas.x) * ratio;
+  state.pathCanvas.y = py - (py - state.pathCanvas.y) * ratio;
+  state.pathCanvas.scale = clamped;
+  applyPathCanvasTransform();
 }
 
 function renderPanelView() {
@@ -5224,48 +5598,151 @@ function restoreMessageListBottomDistance(bottomDistance) {
   list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight - bottomDistance);
 }
 
+/*
+ * 一轮 = 一条 user message 加上它的回答。
+ * user.parentId 指向上一轮，缺失时（旧数据）按 createdAt 顺序当成一条直线，
+ * 因此改造前保存的问答仍然照原样渲染。
+ */
+function buildRounds(messages) {
+  const users = (messages || [])
+    .filter((item) => item?.role === "user")
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  const assistants = (messages || [])
+    .filter((item) => item?.role === "assistant")
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+
+  const answerByUserId = new Map();
+  const unlinkedAssistants = [];
+  for (const assistant of assistants) {
+    if (assistant.parentId) {
+      // 升序遍历，后写覆盖，于是重试产生的新回答会盖掉旧的
+      answerByUserId.set(assistant.parentId, assistant);
+    } else {
+      unlinkedAssistants.push(assistant);
+    }
+  }
+  for (const assistant of unlinkedAssistants) {
+    const owner = [...users]
+      .reverse()
+      .find(
+        (user) =>
+          String(user.createdAt || "").localeCompare(String(assistant.createdAt || "")) <= 0 &&
+          !answerByUserId.has(user.id)
+      );
+    if (owner) {
+      answerByUserId.set(owner.id, assistant);
+    }
+  }
+
+  const rounds = users.map((user, index) => ({
+    id: user.id,
+    user,
+    assistant: answerByUserId.get(user.id) || null,
+    parentId:
+      typeof user.parentId === "string" ? user.parentId : index > 0 ? users[index - 1].id : "",
+    children: []
+  }));
+
+  const byId = new Map(rounds.map((round) => [round.id, round]));
+  for (const round of rounds) {
+    const parent = round.parentId ? byId.get(round.parentId) : null;
+    if (parent) {
+      parent.children.push(round);
+    } else {
+      round.parentId = "";
+    }
+  }
+
+  return { rounds, byId, roots: rounds.filter((round) => !round.parentId) };
+}
+
+function roundPath(tree, roundId) {
+  const path = [];
+  let cursor = tree?.byId?.get(roundId) || null;
+  while (cursor) {
+    path.unshift(cursor);
+    cursor = cursor.parentId ? tree.byId.get(cursor.parentId) || null : null;
+  }
+  return path;
+}
+
+function deepestRoundId(round) {
+  let cursor = round;
+  while (cursor?.children?.length) {
+    cursor = cursor.children[0];
+  }
+  return cursor?.id || "";
+}
+
+function resolveActiveRoundId(tree) {
+  if (state.activeRoundId && tree?.byId?.has(state.activeRoundId)) {
+    return state.activeRoundId;
+  }
+  const root = tree?.roots?.[0];
+  return root ? deepestRoundId(root) : "";
+}
+
+function getActiveRound() {
+  return state.roundTree?.byId?.get(state.activeRoundId) || null;
+}
+
+function setActiveRound(roundId, options = {}) {
+  if (!roundId) {
+    return;
+  }
+  closeBranchPop();
+  state.activeRoundId = roundId;
+  void renderMessages().then(() => {
+    if (options.focusInput) {
+      elements.questionInput.focus();
+    }
+  });
+}
+
 async function renderMessages(options = {}) {
   const preserveViewerScroll = options.preserveViewerScroll === true;
   const bottomDistanceBeforeRender = getMessageListBottomDistance();
   const shouldFollowBottom = !preserveViewerScroll || isMessageListNearBottom();
+  closeBranchPop();
   elements.messageList.replaceChildren();
-  updateSendState();
+  elements.messageList.classList.add("round-list");
 
   if (!state.activeThread) {
+    state.roundTree = null;
+    state.activeRoundId = "";
+    renderPathSummary(null, 0);
+    renderPathRail();
+    updateSendState();
+    if (state.pathCanvas.open) {
+      renderPathCanvas();
+    }
     return;
   }
 
   const settings = await getSettings();
   const fallbackModelLabel = settings.ai?.model || "当前模型";
   const messages = await getThreadMessages(state.activeThread.id);
-  const visibleMessages = messages.filter((item) => item.role !== "selection");
-  for (const message of visibleMessages) {
-    const card = document.createElement("div");
-    card.className = `message message-${message.role}`;
+  const tree = buildRounds(messages);
+  state.roundTree = tree;
+  state.activeRoundId = resolveActiveRoundId(tree);
+  const path = roundPath(tree, state.activeRoundId);
 
-    const content = document.createElement("div");
-    content.className = "message-content";
-    renderMessageContent(content, message.content);
+  path.forEach((round, index) => {
+    elements.messageList.append(
+      buildRoundElement(round, index, path, fallbackModelLabel, index === path.length - 1)
+    );
+  });
 
-    if (message.role !== "user") {
-      const role = document.createElement("span");
-      role.className = "message-role";
-      role.textContent =
-        message.role === "assistant" ? message.model || fallbackModelLabel : getRoleLabel(message.role);
-      card.append(role);
-    }
+  const currentRound = tree.byId.get(state.activeRoundId) || null;
+  if (currentRound?.children?.length) {
+    elements.messageList.append(buildRoundTailHint(currentRound));
+  }
 
-    card.append(content);
-    elements.messageList.append(card);
-
-    if (message.role === "user") {
-      const turnState = getTurnStateForUserMessage(message, visibleMessages);
-      if (turnState) {
-        elements.messageList.append(
-          turnState.status === "running" ? renderStreamingAnswerCard(turnState) : renderTurnStateCard(turnState)
-        );
-      }
-    }
+  renderPathSummary(path, tree.rounds.length);
+  renderPathRail();
+  updateSendState();
+  if (state.pathCanvas.open) {
+    renderPathCanvas();
   }
 
   if (shouldFollowBottom) {
@@ -5275,7 +5752,326 @@ async function renderMessages(options = {}) {
   }
 }
 
-function getTurnStateForUserMessage(message, messages) {
+function buildRoundElement(round, index, path, fallbackModelLabel, isLast) {
+  const isCurrent = round.id === state.activeRoundId;
+  const article = document.createElement("article");
+  article.className = "round";
+  article.dataset.roundId = round.id;
+  if (isCurrent) {
+    article.classList.add("round-current");
+  }
+  if (isLast) {
+    article.classList.add("round-last");
+  }
+
+  const main = document.createElement("div");
+  main.className = "round-main";
+
+  const question = document.createElement("div");
+  question.className = "round-question";
+  const bubble = document.createElement("p");
+  bubble.textContent = round.user.content || "";
+  question.append(bubble);
+  main.append(question);
+
+  const answerHost = document.createElement("div");
+  answerHost.className = "round-answer";
+  if (round.assistant) {
+    answerHost.append(buildAssistantCard(round.assistant, fallbackModelLabel));
+  }
+  const turnState = getTurnStateForRound(round);
+  if (turnState) {
+    answerHost.append(
+      turnState.status === "running" ? renderStreamingAnswerCard(turnState) : renderTurnStateCard(turnState)
+    );
+  }
+  main.append(answerHost);
+
+  const tools = document.createElement("div");
+  tools.className = "round-tools";
+  const tag = document.createElement("span");
+  tag.className = "round-tag";
+  tag.textContent = `第 ${index + 1} 轮`;
+  tools.append(tag);
+
+  if (!isCurrent) {
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "secondary round-mini-button";
+    back.textContent = "↩ 回到这一轮";
+    back.addEventListener("click", () => setActiveRound(round.id, { focusInput: true }));
+    tools.append(back);
+  }
+  main.append(tools);
+
+  if (round.children.length > 1) {
+    main.append(buildBranchChips(round, path));
+  }
+
+  article.append(main);
+  return article;
+}
+
+function buildBranchChips(round, path) {
+  const chips = document.createElement("div");
+  chips.className = "branch-chips";
+  const lead = document.createElement("span");
+  lead.className = "branch-chips-lead";
+  lead.textContent = `这一轮下面有 ${round.children.length} 条线：`;
+  chips.append(lead);
+
+  round.children.forEach((child, index) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "secondary branch-chip";
+    if (path.some((item) => item.id === child.id)) {
+      chip.classList.add("on");
+    }
+    chip.textContent = `${index === 0 ? "主线" : `支线 ${index}`} · ${createHistoryTitle(
+      child.user.content || ""
+    )}`;
+    chip.addEventListener("click", () => setActiveRound(deepestRoundId(child)));
+    chips.append(chip);
+  });
+  return chips;
+}
+
+/*
+ * 右侧路径窄条：只画当前这条线（root → 当前轮，再顺默认后续延伸成虚线），
+ * 其他支线收成「小方块」徽标，点开才展开。和 demo 的单线形态一致。
+ */
+function activeRoundLine() {
+  const tree = state.roundTree;
+  const path = roundPath(tree, state.activeRoundId);
+  const rows = [...path];
+  let cursor = tree?.byId?.get(state.activeRoundId)?.children?.[0] || null;
+  while (cursor) {
+    rows.push(cursor);
+    cursor = cursor.children[0] || null;
+  }
+  return { rows, aheadFrom: path.length };
+}
+
+function renderPathRail() {
+  const inner = elements.pathRailInner;
+  if (!inner) {
+    return;
+  }
+
+  inner.querySelectorAll(".rail-dot, .fork-badge").forEach((node) => node.remove());
+  const tree = state.roundTree;
+  if (!tree?.rounds?.length) {
+    elements.pathRailLinks.innerHTML = "";
+    inner.style.height = "0px";
+    return;
+  }
+
+  const { rows, aheadFrom } = activeRoundLine();
+  const x = 20;
+  const rowHeight = 44;
+  const padY = 16;
+
+  const positions = new Map();
+  rows.forEach((round, index) => {
+    positions.set(round.id, padY + index * rowHeight);
+  });
+  const lastY = rows.length ? positions.get(rows[rows.length - 1].id) : padY;
+  inner.style.height = `${lastY + padY}px`;
+
+  // 一根通到底的线，比每段一画干净
+  const paths = [];
+  if (rows.length > 1) {
+    const splitIndex = Math.max(0, aheadFrom - 1);
+    const splitY = positions.get(rows[splitIndex].id);
+    paths.push(`<path class="path-rail-link on" d="M ${x} ${positions.get(rows[0].id)} L ${x} ${splitY}" />`);
+    if (splitIndex < rows.length - 1) {
+      paths.push(`<path class="path-rail-link ahead" d="M ${x} ${splitY} L ${x} ${lastY}" />`);
+    }
+  }
+  elements.pathRailLinks.innerHTML = paths.join("");
+
+  rows.forEach((round, index) => {
+    const y = positions.get(round.id);
+    const ahead = index >= aheadFrom;
+    const dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = "rail-dot on";
+    if (round.id === state.activeRoundId) {
+      dot.classList.add("current");
+    }
+    if (ahead) {
+      dot.classList.add("ahead");
+    }
+    dot.style.left = `${x}px`;
+    dot.style.top = `${y}px`;
+    dot.title = `第 ${index + 1} 轮：${createHistoryTitle(round.user.content || "")}`;
+    dot.setAttribute("aria-label", `跳到第 ${index + 1} 轮`);
+    dot.addEventListener("click", () => setActiveRound(round.id));
+    inner.append(dot);
+
+    if (round.children.length > 1) {
+      const activeChildIndex = round.children.findIndex((child) =>
+        rows.some((row) => row.id === child.id)
+      );
+      const badge = buildForkBadge(round, activeChildIndex);
+      badge.style.left = `${x + 11}px`;
+      badge.style.top = `${y}px`;
+      inner.append(badge);
+    }
+  });
+
+  const currentDot = inner.querySelector(".rail-dot.current");
+  if (currentDot) {
+    elements.pathRailScroll.scrollTo({
+      top: Math.max(0, currentDot.offsetTop - elements.pathRailScroll.clientHeight / 2),
+      behavior: "smooth"
+    });
+  }
+}
+
+
+function buildAssistantCard(message, fallbackModelLabel) {
+  const card = document.createElement("div");
+  card.className = "message message-assistant";
+  const role = document.createElement("span");
+  role.className = "message-role";
+  role.textContent = message.model || fallbackModelLabel;
+  const content = document.createElement("div");
+  content.className = "message-content";
+  renderMessageContent(content, message.content);
+  card.append(role, content);
+  return card;
+}
+
+function buildRoundTailHint(round) {
+  const wrap = document.createElement("div");
+  wrap.className = "round-tail-hint";
+  const body = document.createElement("div");
+  body.className = "tail-body";
+  body.textContent = `这一轮后面已经有 ${round.children.length} 条后续。直接提问会从这里新分出一条支线，原来的线不会被覆盖。`;
+
+  const row = document.createElement("div");
+  row.className = "tail-row";
+  round.children.forEach((child, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary round-mini-button";
+    button.textContent = `↓ ${index === 0 ? "继续原线" : `支线 ${index}`}：${createHistoryTitle(
+      child.user.content || ""
+    )}`;
+    button.addEventListener("click", () => setActiveRound(deepestRoundId(child)));
+    row.append(button);
+  });
+  body.append(row);
+  wrap.append(body);
+  return wrap;
+}
+
+/*
+ * 支线徽标：≤5 条画小方块并高亮当前那条，>5 条退回数字。
+ * interactive: false 时渲染成 span —— 画布卡片本身就是按钮，按钮不能套按钮。
+ */
+function buildForkBadge(round, activeChildIndex, options = {}) {
+  const interactive = options.interactive !== false;
+  const total = round.children.length;
+  const usePips = total <= FORK_PIP_LIMIT;
+  const badge = document.createElement(interactive ? "button" : "span");
+  if (interactive) {
+    badge.type = "button";
+  }
+  badge.className = "fork-badge";
+  badge.title =
+    activeChildIndex >= 0
+      ? `这一轮有 ${total} 条线，当前在第 ${activeChildIndex + 1} 条`
+      : `这一轮有 ${total} 条线`;
+
+  if (usePips) {
+    for (let index = 0; index < total; index += 1) {
+      const pip = document.createElement("span");
+      pip.className = index === activeChildIndex ? "fork-pip on" : "fork-pip";
+      badge.append(pip);
+    }
+  } else {
+    const num = document.createElement("span");
+    num.className = "fork-num";
+    num.textContent = activeChildIndex >= 0 ? `${activeChildIndex + 1}/${total}` : `⑂${total}`;
+    badge.append(num);
+  }
+
+  const signature = `${usePips ? "pip" : "num"}:${total}:${activeChildIndex}`;
+  if (forkBadgeMemory.has(round.id) && forkBadgeMemory.get(round.id) !== signature) {
+    badge.classList.add("morph");
+  }
+  forkBadgeMemory.set(round.id, signature);
+
+  if (interactive) {
+    badge.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openBranchPop(badge, round, activeChildIndex);
+    });
+  }
+  return badge;
+}
+
+function closeBranchPop() {
+  branchPopElement?.remove();
+  branchPopElement = null;
+}
+
+function openBranchPop(anchor, round, activeChildIndex) {
+  closeBranchPop();
+  const pop = document.createElement("div");
+  pop.className = "branch-pop";
+  const head = document.createElement("div");
+  head.className = "branch-pop-head";
+  head.textContent = `这一轮往下有 ${round.children.length} 条线`;
+  pop.append(head);
+
+  round.children.forEach((child, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    if (index === activeChildIndex) {
+      button.classList.add("on");
+    }
+    button.textContent = `${index + 1}. ${createHistoryTitle(child.user.content || "")}${
+      index === activeChildIndex ? "　· 当前" : ""
+    }`;
+    button.addEventListener("click", () => setActiveRound(deepestRoundId(child)));
+    pop.append(button);
+  });
+
+  document.body.append(pop);
+  branchPopElement = pop;
+
+  const anchorRect = anchor.getBoundingClientRect();
+  const popRect = pop.getBoundingClientRect();
+  let left = anchorRect.left - popRect.width - 8;
+  if (left < 8) {
+    left = Math.min(anchorRect.right + 8, window.innerWidth - popRect.width - 8);
+  }
+  let top = anchorRect.top - 6;
+  if (top + popRect.height > window.innerHeight - 8) {
+    top = window.innerHeight - popRect.height - 8;
+  }
+  pop.style.left = `${Math.max(8, left)}px`;
+  pop.style.top = `${Math.max(8, top)}px`;
+}
+
+function renderPathSummary(path, total) {
+  if (!elements.pathSummary) {
+    return;
+  }
+  if (!path?.length) {
+    elements.pathSummary.textContent = "";
+    return;
+  }
+  elements.pathSummary.textContent = total > path.length
+    ? `第 ${path.length} 轮 / 共 ${total} 轮`
+    : `第 ${path.length} 轮`;
+}
+
+function getTurnStateForRound(round) {
+  const message = round.user;
   const activeRun = state.activeAnswerRun;
   if (activeRun?.threadId === message.threadId && activeRun.userMessageId === message.id) {
     return {
@@ -5310,12 +6106,7 @@ function getTurnStateForUserMessage(message, messages) {
     };
   }
 
-  const hasLaterAssistant = messages.some(
-    (item) =>
-      item.role === "assistant" &&
-      String(item.createdAt || "").localeCompare(String(message.createdAt || "")) > 0
-  );
-  if (message.answerStatus === "submitted" && !hasLaterAssistant) {
+  if (message.answerStatus === "submitted" && !round.assistant) {
     return {
       status: "submitted",
       threadId: message.threadId,
@@ -5773,6 +6564,7 @@ async function activateThread(threadId) {
   }
 
   state.activeThread = thread;
+  state.activeRoundId = "";
   state.activeHighlight =
     state.highlights.find((highlight) => highlight.id === thread.highlightId) ||
     state.highlights.find((highlight) => highlight.threadId === thread.id) ||
@@ -5884,11 +6676,16 @@ async function sendQuestion(options = {}) {
   const settingsAtQuestion = await getSettings();
   const aiSettingsAtQuestion = { ...(settingsAtQuestion.ai || {}) };
   const modelAtQuestion = aiSettingsAtQuestion.model || "当前模型";
+  // 以发送这一刻的当前轮作为父轮：当前轮已经有后续时，这里就自然分出一条支线
+  const treeBeforeQuestion = buildRounds(await getThreadMessages(state.activeThread.id));
+  const parentRoundId = resolveActiveRoundId(treeBeforeQuestion);
   const userMessage = await persistUserQuestionMessage({
     question,
     model: modelAtQuestion,
-    existingUserMessage: options.userMessage
+    existingUserMessage: options.userMessage,
+    parentId: parentRoundId
   });
+  state.activeRoundId = userMessage.id;
   const answerRun = {
     id: createId("answerRun"),
     controller: new AbortController(),
@@ -5977,7 +6774,7 @@ async function sendQuestion(options = {}) {
   }
 }
 
-async function persistUserQuestionMessage({ question, model, existingUserMessage }) {
+async function persistUserQuestionMessage({ question, model, existingUserMessage, parentId = "" }) {
   const now = nowIso();
   const editableMessage = existingUserMessage || (await getEditingQuestionMessage());
   const userMessage = editableMessage
@@ -5994,6 +6791,8 @@ async function persistUserQuestionMessage({ question, model, existingUserMessage
         id: createId("msg"),
         threadId: state.activeThread.id,
         role: "user",
+        // 空串代表这条 thread 的第一轮；重新编辑旧问题时不动它原有的父轮
+        parentId,
         content: question,
         model,
         answerStatus: "submitted",
@@ -6059,6 +6858,8 @@ async function saveSuccessfulAnswer(answerRun, content) {
     id: createId("msg"),
     threadId: answerRun.threadId,
     role: "assistant",
+    // 显式指回它回答的那条问题，分支之后就不能再靠时间顺序配对
+    parentId: answerRun.userMessageId,
     content,
     model: answerRun.model,
     createdAt
@@ -6325,8 +7126,11 @@ function updateSendState() {
     Boolean(state.activeThread) &&
     state.editingQuestion.threadId === state.activeThread.id;
 
+  const branching = Boolean(getActiveRound()?.children?.length);
   elements.questionInput.readOnly = isRunning;
   elements.questionInput.setAttribute("aria-busy", String(isRunning));
+  elements.questionInput.placeholder = branching ? BRANCH_PLACEHOLDER : QUESTION_PLACEHOLDER;
+  elements.composer?.classList.toggle("branching", branching);
   elements.composer?.classList.toggle("answer-running", isRunning);
   elements.sendQuestionButton.textContent = isRunning ? "停止" : isEditing ? "重新发送" : "发送";
   elements.sendQuestionButton.classList.toggle("stop-button", isRunning);
@@ -6348,6 +7152,17 @@ function handleQuestionKeydown(event) {
 }
 
 async function handleShortcut(event) {
+  if (event.key === "Escape") {
+    if (branchPopElement) {
+      closeBranchPop();
+      return;
+    }
+    if (state.pathCanvas.open) {
+      closePathCanvas();
+    }
+    return;
+  }
+
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "q") {
     event.preventDefault();
     await captureSelection();
@@ -6382,7 +7197,7 @@ async function openDraftQuestion() {
     return;
   }
   await createThreadFromSelection({ focusInput: true });
-  pulseSelectionCard();
+  pulseSelectionChip();
 }
 
 async function openKnowledgePage() {
@@ -6401,10 +7216,33 @@ function setPanelView(view) {
   renderPanelView();
 }
 
-function toggleSidebarSection(button) {
-  const section = button.closest(".sidebar-section");
-  const isCollapsed = section.classList.toggle("collapsed");
-  button.setAttribute("aria-expanded", String(!isCollapsed));
+function setSidebarTab(tab) {
+  const next = tab === "toc" ? "toc" : "documents";
+  state.sidebarTab = next;
+  const showToc = next === "toc";
+  elements.documentsTab.setAttribute("aria-selected", String(!showToc));
+  elements.tocTab.setAttribute("aria-selected", String(showToc));
+  elements.documentsPanel.toggleAttribute("hidden", showToc);
+  elements.tocPanel.toggleAttribute("hidden", !showToc);
+}
+
+function handleSidebarTabKeydown(event) {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+    return;
+  }
+  event.preventDefault();
+  const next = state.sidebarTab === "documents" ? "toc" : "documents";
+  setSidebarTab(next);
+  (next === "toc" ? elements.tocTab : elements.documentsTab).focus();
+}
+
+/* 目录被 tab 藏起来时，用计数告诉用户里面有没有东西 */
+function updateTocCount(count) {
+  if (!elements.tocCount) {
+    return;
+  }
+  elements.tocCount.textContent = String(count);
+  elements.tocCount.toggleAttribute("hidden", count <= 0);
 }
 
 function showSelectionAskButton(selection) {
@@ -6438,18 +7276,19 @@ function hideSelectionAskButton() {
   elements.selectionAskButton.hidden = true;
 }
 
-function pulseSelectionCard() {
-  if (!elements.selectionCard) {
+function pulseSelectionChip() {
+  const chip = elements.selectionChips?.querySelector(".selection-chip-wrap");
+  if (!chip) {
     return;
   }
 
-  elements.selectionCard.classList.remove("selection-card-feedback");
-  void elements.selectionCard.offsetWidth;
-  elements.selectionCard.classList.add("selection-card-feedback");
+  chip.classList.remove("selection-chip-feedback");
+  void chip.offsetWidth;
+  chip.classList.add("selection-chip-feedback");
 
   window.clearTimeout(selectionFeedbackTimer);
   selectionFeedbackTimer = window.setTimeout(() => {
-    elements.selectionCard.classList.remove("selection-card-feedback");
+    chip.classList.remove("selection-chip-feedback");
     selectionFeedbackTimer = 0;
   }, 900);
 }
@@ -7022,15 +7861,6 @@ function createHistoryTitle(text) {
   return compact.length > 42 ? `${compact.slice(0, 42)}...` : compact;
 }
 
-function getRoleLabel(role) {
-  if (role === "selection") {
-    return "划线原文";
-  }
-  if (role === "assistant") {
-    return "模型回答";
-  }
-  return role;
-}
 
 function setStatus(message) {
   elements.status.textContent = message;

@@ -1,0 +1,1780 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>StepRead · 链式对话 + 节点图例 demo</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0a0a0c;
+        --card: #1c1c1f;
+        --card-line: #2c2c31;
+        --bubble: #3a3a3f;
+        --text: #f2f3f5;
+        --text-soft: #a6a9b0;
+        --text-dim: #6d7079;
+        --term-line: rgb(255 255 255 / 42%);
+        --term-line-used: rgb(120 200 255 / 85%);
+        --glow: rgb(255 255 255 / 55%);
+        --ok: #30d158;
+        --mark: #0a84ff;
+        --danger: #ff453a;
+        --accent: #6aa5ff;
+        --accent-soft: rgb(106 165 255 / 16%);
+        --accent-line: rgb(106 165 255 / 55%);
+        --rail: rgb(255 255 255 / 16%);
+        --rail-on: rgb(106 165 255 / 70%);
+        --dot-bg: #0b0b0d;
+        font-family: "PingFang SC", "Microsoft YaHei", Inter, system-ui, sans-serif;
+      }
+
+      body[data-theme="light"] {
+        color-scheme: light;
+        --bg: #f1f3f6;
+        --card: #ffffff;
+        --card-line: #e2e6eb;
+        --bubble: #edf0f4;
+        --text: #14161a;
+        --text-soft: #565c66;
+        --text-dim: #8a9099;
+        --term-line: rgb(0 0 0 / 32%);
+        --term-line-used: rgb(47 111 224 / 75%);
+        --glow: rgb(47 111 224 / 45%);
+        --ok: #1a9b45;
+        --mark: #2f6fe0;
+        --danger: #d93b30;
+        --accent: #2f6fe0;
+        --accent-soft: rgb(47 111 224 / 12%);
+        --accent-line: rgb(47 111 224 / 45%);
+        --rail: rgb(0 0 0 / 14%);
+        --rail-on: rgb(47 111 224 / 60%);
+        --dot-bg: #ffffff;
+      }
+      body[data-theme="light"] .composer input { background: #f7f8fa; }
+      body[data-theme="light"] .composer button { background: #1b1d22; color: #fff; }
+      body[data-theme="light"] .minimap { background: #e9ecf1; }
+      body[data-theme="light"] .minimap[data-expanded="true"] { background: #fbfcfd; }
+      body[data-theme="light"] .term:hover { background: rgb(0 0 0 / 6%); }
+      body[data-theme="light"] .topnote button:hover,
+      body[data-theme="light"] .mini-btn:hover,
+      body[data-theme="light"] .chip:hover,
+      body[data-theme="light"] .map-toggle:hover { background: #e6e9ee; }
+      body[data-theme="light"] .round-btn { background: #eceff3; }
+      body[data-theme="light"] .toast { background: #1b1d22; color: #fff; }
+
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+
+      body {
+        margin: 0;
+        height: 100vh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg);
+        color: var(--text);
+        font-size: 15px;
+      }
+
+      .topnote {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+        padding: 9px 18px;
+        border-bottom: 1px solid var(--card-line);
+        font-size: 12px;
+        color: var(--text-dim);
+      }
+      .topnote b { color: var(--text-soft); font-weight: 600; }
+      .topnote .sp { flex: 1 1 auto; }
+      .topnote button {
+        min-height: 26px;
+        padding: 0 10px;
+        border: 1px solid var(--card-line);
+        border-radius: 7px;
+        background: transparent;
+        color: var(--text-soft);
+        font: inherit;
+        cursor: pointer;
+      }
+      .topnote button:hover { background: #24242a; color: var(--text); }
+      .seg { display: inline-flex; border: 1px solid var(--card-line); border-radius: 8px; overflow: hidden; }
+      .seg button { border: 0; border-radius: 0; min-height: 24px; padding: 0 10px; font-size: 11.5px; }
+      .seg button + button { border-left: 1px solid var(--card-line); }
+      .seg button[aria-pressed="true"] { background: var(--accent); color: var(--dot-bg); font-weight: 600; }
+
+      .stage {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        gap: 14px;
+        padding: 18px;
+        justify-content: center;
+      }
+
+      /* ---------------- chat card (P1) ---------------- */
+      .chat-card {
+        flex: 1 1 auto;
+        max-width: 900px;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--card-line);
+        border-radius: 18px;
+        background: var(--card);
+        overflow: hidden;
+      }
+      .card-head {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 18px 22px 12px;
+      }
+      .card-head h1 {
+        flex: 1 1 auto;
+        margin: 0;
+        font-size: 21px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+      }
+      .head-actions { display: flex; gap: 8px; }
+      .round-btn {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        border: 1px solid transparent;
+        background: #2a2a2f;
+        color: var(--text-soft);
+        font-size: 14px;
+        line-height: 1;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .round-btn:hover { filter: brightness(1.35); }
+      .round-btn.ok { color: var(--ok); }
+      .round-btn.mark { color: var(--mark); }
+      .round-btn.mark.on { background: rgb(10 132 255 / 22%); }
+      .round-btn.danger { color: var(--danger); background: rgb(255 69 58 / 14%); }
+      .round-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+      .rounds {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+        padding: 6px 22px 10px;
+        scroll-behavior: smooth;
+      }
+      .round { padding: 10px 0 4px; }
+      .round + .round { margin-top: 6px; }
+      .q-row { display: flex; justify-content: flex-end; }
+      .q-bubble {
+        max-width: 76%;
+        padding: 10px 16px;
+        border-radius: 14px;
+        background: var(--bubble);
+        font-size: 15px;
+        line-height: 1.55;
+        font-weight: 500;
+      }
+      .a-body {
+        margin: 18px 0 0;
+        font-size: 16.5px;
+        line-height: 1.95;
+        letter-spacing: 0.01em;
+      }
+      .a-body .caret {
+        display: inline-block;
+        width: 7px;
+        height: 16px;
+        background: var(--text-soft);
+        vertical-align: -3px;
+        animation: blink 1s steps(2, start) infinite;
+      }
+      @keyframes blink { to { visibility: hidden; } }
+
+      .term {
+        display: inline;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-bottom: 1px solid var(--term-line);
+        background: none;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+      .term:hover { border-bottom-color: #fff; background: rgb(255 255 255 / 8%); }
+      .term.used {
+        border-bottom: 1px solid var(--term-line-used);
+        color: #cfe9ff;
+      }
+      .term:focus-visible { outline: 1px solid #fff; outline-offset: 2px; }
+
+      .round-tools {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 12px;
+        opacity: 0;
+        transition: opacity 0.14s ease;
+      }
+      .round:hover .round-tools,
+      .round.pinned .round-tools { opacity: 1; }
+      .round-tools .tag { font-size: 11.5px; color: var(--text-dim); }
+      .mini-btn {
+        min-height: 24px;
+        padding: 0 9px;
+        border: 1px solid var(--card-line);
+        border-radius: 999px;
+        background: transparent;
+        color: var(--text-soft);
+        font-size: 11.5px;
+        cursor: pointer;
+      }
+      .mini-btn:hover { background: #24242a; color: var(--text); }
+
+      .branch-chips {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+        padding-top: 11px;
+        border-top: 1px dashed var(--card-line);
+      }
+      .branch-chips .lead { font-size: 11.5px; color: var(--text-dim); }
+      .chip {
+        min-height: 25px;
+        padding: 0 11px;
+        border: 1px solid var(--card-line);
+        border-radius: 999px;
+        background: transparent;
+        color: var(--text-soft);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .chip:hover { background: #24242a; color: var(--text); }
+      .chip {
+        max-width: 210px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .chip.on {
+        border-color: rgb(255 255 255 / 55%);
+        background: rgb(255 255 255 / 10%);
+        color: #fff;
+      }
+
+      .tail-hint {
+        margin: 16px 0 4px;
+        padding: 12px 14px;
+        border: 1px dashed var(--card-line);
+        border-radius: 12px;
+        font-size: 12.5px;
+        color: var(--text-dim);
+        line-height: 1.7;
+      }
+      .tail-hint .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 9px; }
+
+      .composer {
+        flex: 0 0 auto;
+        display: flex;
+        gap: 10px;
+        padding: 14px 22px 18px;
+        border-top: 1px solid var(--card-line);
+      }
+      .composer input {
+        flex: 1 1 auto;
+        min-width: 0;
+        height: 42px;
+        padding: 0 15px;
+        border: 1px solid var(--card-line);
+        border-radius: 12px;
+        background: #16161a;
+        color: var(--text);
+        font: inherit;
+      }
+      .composer input::placeholder { color: var(--text-dim); }
+      .composer input:focus-visible { outline: none; border-color: rgb(255 255 255 / 35%); }
+      .composer button {
+        height: 42px;
+        padding: 0 20px;
+        border: 0;
+        border-radius: 12px;
+        background: #f2f3f5;
+        color: #111;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .composer button:disabled { opacity: 0.4; cursor: not-allowed; }
+      .composer.branching input { border-color: rgb(120 200 255 / 55%); }
+
+      /* ---------------- minimap (P2 / P3) ---------------- */
+      .minimap {
+        flex: 0 0 auto;
+        width: 96px;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid transparent;
+        border-radius: 18px;
+        background: #0e0e11;
+        transition: width 0.22s ease, background 0.22s ease;
+        overflow: hidden;
+      }
+      .minimap[data-expanded="true"] {
+        width: 300px;
+        border-color: var(--card-line);
+        background: #131317;
+      }
+      .map-head {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 12px 8px;
+        font-size: 11.5px;
+        color: var(--text-dim);
+      }
+      .minimap[data-expanded="false"] .map-head { justify-content: center; }
+      .minimap[data-expanded="false"] .map-head .label { display: none; }
+      .map-head .label { flex: 1 1 auto; }
+      .map-toggle {
+        width: 26px;
+        height: 26px;
+        border: 1px solid var(--card-line);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-soft);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .map-toggle:hover { background: #24242a; color: var(--text); }
+      .map-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 10px 0 24px; }
+      .map-inner { position: relative; }
+      .map-inner svg { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+      .map-link { fill: none; stroke: var(--rail); stroke-width: 1.6; }
+      .map-link.on { stroke: var(--rail-on); stroke-width: 2; }
+      .map-link.spine { stroke: var(--rail-on); stroke-width: 2; }
+      .map-link.ahead { stroke: var(--rail); stroke-dasharray: 3 4; }
+
+      .map-node {
+        position: absolute;
+        width: 22px;
+        height: 22px;
+        margin: -11px 0 0 -11px;
+        padding: 0;
+        border: 2px solid var(--rail);
+        border-radius: 50%;
+        background: var(--dot-bg);
+        cursor: pointer;
+        transition: box-shadow 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+      }
+      .map-node:hover { transform: scale(1.2); border-color: var(--accent); }
+      .map-node.on { border-color: var(--accent-line); }
+      .map-node.current {
+        border-color: var(--accent);
+        background: var(--accent);
+        box-shadow: 0 0 0 4px var(--accent-soft), 0 0 16px 3px var(--glow);
+      }
+      .map-node.ahead { opacity: 0.4; }
+
+      /* 单线：只画当前这条线，点更小、行距更松 */
+      .minimap[data-style="spine"] .map-node,
+      .minimap[data-style="rail"] .map-node {
+        width: 14px;
+        height: 14px;
+        margin: -7px 0 0 -7px;
+        border-width: 2px;
+      }
+      .minimap[data-style="rail"] .map-node {
+        width: 10px;
+        height: 10px;
+        margin: -5px 0 0 -5px;
+        border-width: 1.5px;
+      }
+      .minimap[data-style="rail"] .map-node.far { width: 6px; height: 6px; margin: -3px 0 0 -3px; opacity: 0.55; }
+
+      .map-badge {
+        position: absolute;
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        min-height: 17px;
+        margin-top: -8px;
+        padding: 0 5px;
+        border: 1px solid var(--accent-line);
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 10px;
+        font-weight: 700;
+        line-height: 15px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background 0.18s ease, border-color 0.18s ease, padding 0.18s ease;
+      }
+      .map-badge:hover { background: var(--accent); border-color: var(--accent); }
+      .map-badge:hover .pip { border-color: var(--dot-bg); }
+      .map-badge:hover .pip.on { background: var(--dot-bg); }
+      .map-badge:hover .num { color: var(--dot-bg); }
+
+      /* ≤5 条支线：一条一个小方块，高亮当前所在的那条 */
+      .pip {
+        width: 5px;
+        height: 5px;
+        border: 1px solid var(--accent-line);
+        border-radius: 1.5px;
+        background: transparent;
+        transition: background 0.18s ease, transform 0.18s ease;
+      }
+      .pip.on {
+        background: var(--accent);
+        border-color: var(--accent);
+        transform: scale(1.32);
+      }
+      .num { display: inline-block; letter-spacing: 0.02em; }
+
+      /* 越过 5 条阈值时的形态切换动画 */
+      .map-badge.morph .pip { animation: pipIn 0.26s cubic-bezier(0.34, 1.4, 0.64, 1) backwards; }
+      .map-badge.morph .pip:nth-child(2) { animation-delay: 0.03s; }
+      .map-badge.morph .pip:nth-child(3) { animation-delay: 0.06s; }
+      .map-badge.morph .pip:nth-child(4) { animation-delay: 0.09s; }
+      .map-badge.morph .pip:nth-child(5) { animation-delay: 0.12s; }
+      .map-badge.morph .num { animation: numIn 0.26s cubic-bezier(0.34, 1.4, 0.64, 1) backwards; }
+      @keyframes pipIn {
+        from { opacity: 0; transform: scale(0.2); }
+        to { opacity: 1; }
+      }
+      @keyframes numIn {
+        from { opacity: 0; transform: scale(0.55); letter-spacing: -0.2em; }
+        to { opacity: 1; transform: scale(1); }
+      }
+
+      .branch-pop {
+        position: fixed;
+        z-index: 50;
+        min-width: 168px;
+        max-width: 230px;
+        padding: 6px;
+        border: 1px solid var(--card-line);
+        border-radius: 10px;
+        background: var(--card);
+        box-shadow: 0 12px 30px rgb(0 0 0 / 45%);
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .branch-pop .pop-head { padding: 3px 6px; font-size: 10.5px; color: var(--text-dim); }
+      .branch-pop button {
+        padding: 6px 8px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--text-soft);
+        font: inherit;
+        font-size: 12px;
+        text-align: left;
+        cursor: pointer;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .branch-pop button:hover { background: var(--accent-soft); color: var(--accent); }
+      .branch-pop button.on { color: var(--accent); font-weight: 600; }
+      .map-node.marked::after {
+        content: "";
+        position: absolute;
+        right: -3px;
+        top: -3px;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--mark);
+        box-shadow: 0 0 0 2px #0b0b0d;
+      }
+      .map-label {
+        position: absolute;
+        left: 0;
+        right: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        width: auto;
+        margin-top: -15px;
+        cursor: pointer;
+      }
+      .map-label .n { font-size: 10px; color: var(--text-dim); letter-spacing: 0.04em; }
+      .map-label .t {
+        font-size: 12.5px;
+        color: var(--text-soft);
+        line-height: 1.4;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .map-label.on .t { color: #fff; font-weight: 600; }
+      .map-label:hover .t { color: #fff; }
+
+      /* ---------------- 全部展开：整页无限画布 ---------------- */
+      .graph-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg);
+        animation: graphIn 0.2s ease;
+      }
+      @keyframes graphIn {
+        from { opacity: 0; transform: scale(0.985); }
+        to { opacity: 1; transform: scale(1); }
+      }
+      .graph-bar {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--card-line);
+        background: var(--card);
+      }
+      .graph-bar strong { font-size: 14px; }
+      .graph-bar .hint { font-size: 11.5px; color: var(--text-dim); }
+      .graph-bar .sp { flex: 1 1 auto; }
+      .graph-bar button {
+        min-height: 28px;
+        padding: 0 11px;
+        border: 1px solid var(--card-line);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-soft);
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .graph-bar button:hover { background: var(--accent-soft); color: var(--accent); }
+      .graph-stage {
+        position: relative;
+        flex: 1 1 auto;
+        overflow: hidden;
+        cursor: grab;
+        background-image: radial-gradient(circle, var(--rail) 1.1px, transparent 1.1px);
+        background-size: 26px 26px;
+      }
+      .graph-stage.grabbing { cursor: grabbing; }
+      .graph-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+      .graph-world svg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+      .graph-link { fill: none; stroke: var(--rail); stroke-width: 2; }
+      .graph-link.on { stroke: var(--rail-on); stroke-width: 2.6; }
+
+      .graph-node {
+        position: absolute;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 3px;
+        width: 190px;
+        min-height: 0;
+        padding: 10px 12px;
+        border: 1px solid var(--card-line);
+        border-radius: 12px;
+        background: var(--card);
+        text-align: left;
+        cursor: pointer;
+        transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+      }
+      .graph-node:hover { transform: translateY(-1px); border-color: var(--accent-line); }
+      .graph-node .n { font-size: 10.5px; color: var(--text-dim); letter-spacing: 0.04em; }
+      .graph-node .t {
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        font-size: 13.5px;
+        font-weight: 650;
+        line-height: 1.45;
+        color: var(--text);
+        overflow-wrap: anywhere;
+      }
+      .graph-node.on { border-color: var(--accent-line); }
+      .graph-node.current {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+      .graph-node .row { display: flex; align-items: center; gap: 5px; margin-top: 2px; }
+      .graph-node .fork {
+        display: inline-flex;
+        gap: 3px;
+        padding: 2px 5px;
+        border: 1px solid var(--accent-line);
+        border-radius: 999px;
+      }
+      .graph-node .marked-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--mark);
+      }
+
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 24px;
+        transform: translateX(-50%);
+        padding: 9px 16px;
+        border-radius: 10px;
+        background: #f2f3f5;
+        color: #111;
+        font-size: 12.5px;
+        font-weight: 600;
+        opacity: 0;
+        transition: opacity 0.18s ease;
+        pointer-events: none;
+      }
+      .toast.on { opacity: 1; }
+
+      @media (max-width: 900px) {
+        .minimap[data-expanded="true"] { width: 220px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topnote">
+      <b>链式对话 demo</b>
+      <span>下划线词点一下 = 顺着往下问；「回到这一轮」后再提问 = 长出支线</span>
+      <span class="sp"></span>
+      <span class="seg" id="styleSeg">
+        <button type="button" data-style="spine">单线</button>
+        <button type="button" data-style="rail">细条</button>
+        <button type="button" data-style="tree">树状</button>
+      </span>
+      <span class="seg" id="themeSeg">
+        <button type="button" data-theme="dark">深色</button>
+        <button type="button" data-theme="light">浅色</button>
+      </span>
+      <span id="stat"></span>
+      <button type="button" id="resetBtn">重置</button>
+    </div>
+
+    <div class="stage">
+      <section class="chat-card">
+        <header class="card-head">
+          <h1 id="cardTitle">量子计算机与极低温</h1>
+          <div class="head-actions">
+            <button type="button" class="round-btn ok" id="branchBtn" title="从当前轮新建一条支线">⧉</button>
+            <button type="button" class="round-btn mark" id="markBtn" title="标记这一轮">🔖</button>
+            <button type="button" class="round-btn danger" id="deleteBtn" title="删除这一轮及其后续">🗑</button>
+          </div>
+        </header>
+        <div class="rounds" id="rounds"></div>
+        <footer class="composer" id="composer">
+          <input id="askInput" type="text" placeholder="继续追问…" autocomplete="off">
+          <button type="button" id="sendBtn">发送</button>
+        </footer>
+      </section>
+
+      <aside class="minimap" id="minimap" data-expanded="false">
+        <div class="map-head">
+          <span class="label" id="mapLabel">对话路径</span>
+          <button type="button" class="map-toggle" id="graphOpen" title="全部展开成画布">⤢</button>
+          <button type="button" class="map-toggle" id="mapToggle" title="展开图例">›</button>
+        </div>
+        <div class="map-scroll" id="mapScroll">
+          <div class="map-inner" id="mapInner"><svg id="mapLinks"></svg></div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="graph-overlay" id="graphOverlay" hidden>
+      <div class="graph-bar">
+        <strong>对话路径 · 全部展开</strong>
+        <span class="hint">拖动平移 · 滚轮缩放 · 点节点跳到那一轮 · Esc 返回</span>
+        <span class="sp"></span>
+        <span class="hint" id="graphStat"></span>
+        <button type="button" id="graphZoomOut">−</button>
+        <button type="button" id="graphZoomLabel">100%</button>
+        <button type="button" id="graphZoomIn">+</button>
+        <button type="button" id="graphFit">回到当前</button>
+        <button type="button" id="graphClose">返回对话</button>
+      </div>
+      <div class="graph-stage" id="graphStage">
+        <div class="graph-world" id="graphWorld"><svg id="graphLinks"></svg></div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+      "use strict";
+
+      const T = (term) => ({ term });
+
+      /* ---------------- content bank (mock) ---------------- */
+      const ANSWERS = {
+        "量子比特": [
+          "量子比特是量子计算的基本单元。经典比特只能取 0 或 1，它却可以处在两者的",
+          T("叠加态"),
+          "上；多个量子比特之间还能建立",
+          T("纠缠"),
+          "，让整体的状态无法拆成各自独立的描述。代价是读出时叠加会坍缩，所以算法必须设计成让正确答案的概率被放大。"
+        ],
+        "量子退相干": [
+          "退相干指量子态因为",
+          T("环境耦合"),
+          "把相位信息泄漏给外界，原本确定的叠加逐渐退化成经典的概率混合。它的快慢用",
+          T("T2 时间"),
+          "刻画，温度越高、噪声越强，衰减越快——这正是要把机器泡在毫开尔文环境里的原因。"
+        ],
+        "超导约瑟夫森结": [
+          "它是两块超导体夹一层极薄绝缘层做成的器件。绝缘层本该阻断电流，但",
+          T("库珀对"),
+          "可以靠",
+          T("隧穿效应"),
+          "直接穿过去。这个结构提供了非线性电感，使超导电路的能级不再等间距，于是最低两级可以被单独拿出来当一个量子比特用。"
+        ],
+        "叠加态": [
+          "叠加态是说系统同时带着多个基态的振幅，而不是「我们只是不知道它在哪个态」。区别可以由干涉实验验证：只有真正的叠加才会出现相位相消。",
+          "描述单个量子比特的叠加，通常画在",
+          T("布洛赫球"),
+          "上——球面上的每一点都是一个纯态，测量则把它投影到南北两极。"
+        ],
+        "纠缠": [
+          "纠缠是多个量子比特共享一个无法分解的整体状态，测量其中一个会立刻决定另一个的统计结果。它是量子算法加速的主要来源之一，但也让噪声更容易扩散：一个比特出错会污染整块寄存器。"
+        ],
+        "环境耦合": [
+          "任何真实器件都与外界连着——衬底里的声子、电路里的电流噪声、附近材料的杂质自旋。这些自由度和量子比特交换能量或相位，就构成环境耦合。工程上要么把耦合做小（屏蔽、提纯材料），要么把噪声推到量子比特不敏感的频段。",
+          "其中最难对付的一类是低频的",
+          T("1/f 噪声"),
+          "，它随时间缓慢漂移，无法靠简单的平均消掉。"
+        ],
+        "T2 时间": [
+          "T2 是相位相干时间：叠加态的相对相位还能保持多久。它总是不长于能量衰减时间 T1，因为任何能量损耗同时也破坏相位。",
+          "测量常用",
+          T("自旋回波"),
+          "序列，把中间的翻转脉冲插进去抵消缓慢漂移，从而分离出真正不可逆的退相干。T2 直接限制了单次计算能塞进多少个门，也就限制了",
+          T("门保真度"),
+          "的上限。"
+        ],
+        "自旋回波": [
+          "做法是让量子比特自由演化一段时间，插入一个 π 脉冲把相位翻转，再演化同样长的时间。缓慢变化的噪声在前后两段里贡献相反，于是被抵消，剩下的衰减才是真正随机的部分。这类思路后来发展成一整套动力学去耦序列。"
+        ],
+        "门保真度": [
+          "门保真度衡量实际执行的操作与理想操作有多接近，通常用",
+          T("随机基准测试"),
+          "来估计：跑很多条随机门序列，看成功率随长度怎么衰减，从衰减率反推每个门的平均错误。",
+          "它是判断能否纠错的关键数字——错误率必须压到",
+          T("纠错阈值"),
+          "以下，纠错才会越纠越对，而不是越纠越糟。"
+        ],
+        "纠错阈值": [
+          "阈值是一个临界错误率：低于它，增加物理量子比特会让逻辑错误指数下降；高于它，纠错电路自己引入的错误比它修掉的更多。",
+          "对目前最常用的",
+          T("表面码"),
+          "来说，这个数量级在千分之几。达标之后，成千上万个物理比特才能合成一个可用的",
+          T("逻辑量子比特"),
+          "。"
+        ],
+        "库珀对": [
+          "在超导体里，两个电子通过",
+          T("电声耦合"),
+          "间接吸引，配成动量相反的一对。成对之后它们的集体行为像玻色子，可以凝聚到同一个宏观量子态，因此能无阻碍地流动。",
+          "把这对电子拆开需要跨过一个",
+          T("能隙"),
+          "，这也解释了为什么温度一高超导就消失。"
+        ],
+        "隧穿效应": [
+          "量子力学允许粒子以一定概率穿过它在经典意义上翻不过去的势垒，概率随势垒厚度指数衰减。约瑟夫森结正是把绝缘层做到几纳米，让库珀对的隧穿变得可观且可控。"
+        ],
+        "相位噪声": [
+          "相位噪声是控制信号自身的相位抖动。它不会让量子比特跃迁到别的能级，却会在每次操作中累积一点角度误差，最后表现为门操作系统性地偏一点。",
+          "对策一是把微波源的",
+          T("1/f 噪声"),
+          "压低，二是用回波类序列让相邻操作的误差互相抵消。"
+        ]
+      };
+
+      const GENERIC = (term) => [
+        `关于「${term}」：在这条线的上下文里，它主要用来解释上一轮提到的机制。可以从三个角度看——它的定义、它带来的物理限制、以及工程上怎么绕开这个限制。`,
+        "落到实践里，通常把它折进整体的",
+        T("噪声预算"),
+        "，再用",
+        T("门保真度"),
+        "来衡量绕开得够不够彻底。"
+      ];
+
+      /* ---------------- state ---------------- */
+      let seq = 0;
+      const uid = () => `n${(seq += 1)}`;
+
+      function makeNode(parentId, question, topic, body) {
+        return {
+          id: uid(),
+          parentId,
+          question,
+          topic,
+          segments: normalize(body),
+          revealed: Infinity,
+          marked: false
+        };
+      }
+
+      function normalize(body) {
+        return (body || []).map((part) =>
+          typeof part === "string" ? { kind: "text", s: part } : { kind: "term", s: part.term }
+        );
+      }
+
+      function seed() {
+        seq = 0;
+        const nodes = [];
+        const root = makeNode(null, "为什么量子计算机必须在接近绝对零度的环境下运行？", "极低温的必要性", [
+          "量子计算机的算力来自",
+          T("量子比特"),
+          "。它依靠叠加态同时承载多种可能，但这种状态极其脆弱——环境中的任何热噪声都会引发",
+          T("量子退相干"),
+          "，让计算瞬间失效。因此主流的",
+          T("超导约瑟夫森结"),
+          "方案必须工作在约 15 mK 的深低温中。"
+        ]);
+        nodes.push(root);
+
+        const chain = ["量子退相干", "T2 时间", "门保真度", "纠错阈值"];
+        let parent = root;
+        for (const term of chain) {
+          const node = makeNode(parent.id, `「${term}」是什么？`, term, ANSWERS[term] || GENERIC(term));
+          nodes.push(node);
+          parent = node;
+        }
+        const leafId = parent.id;
+
+        // 一条从第 1 轮分出的支线（对应 P2 的效果）
+        const b1 = makeNode(root.id, "「超导约瑟夫森结」是什么？", "超导约瑟夫森结", ANSWERS["超导约瑟夫森结"]);
+        const b2 = makeNode(b1.id, "「库珀对」是什么？", "库珀对", ANSWERS["库珀对"]);
+        nodes.push(b1, b2);
+
+        // 另一条从第 2 轮分出的支线
+        const c1 = makeNode(nodes[1].id, "「相位噪声」是什么？", "相位噪声", ANSWERS["相位噪声"]);
+        nodes.push(c1);
+
+        return { nodes, currentId: leafId };
+      }
+
+      const state = {
+        ...seed(),
+        expanded: false,
+        stream: null,
+        mapStyle: "spine",
+        theme: "dark",
+        graphOpen: false,
+        graph: { x: 60, y: 60, scale: 1 }
+      };
+
+      const el = {
+        rounds: document.getElementById("rounds"),
+        mapInner: document.getElementById("mapInner"),
+        mapLinks: document.getElementById("mapLinks"),
+        mapScroll: document.getElementById("mapScroll"),
+        minimap: document.getElementById("minimap"),
+        mapToggle: document.getElementById("mapToggle"),
+        mapLabel: document.getElementById("mapLabel"),
+        input: document.getElementById("askInput"),
+        send: document.getElementById("sendBtn"),
+        composer: document.getElementById("composer"),
+        markBtn: document.getElementById("markBtn"),
+        deleteBtn: document.getElementById("deleteBtn"),
+        stat: document.getElementById("stat"),
+        toast: document.getElementById("toast")
+      };
+
+      /* ---------------- tree helpers ---------------- */
+      const byId = (id) => state.nodes.find((n) => n.id === id) || null;
+      const kidsOf = (id) => state.nodes.filter((n) => n.parentId === id);
+      const rootNode = () => state.nodes.find((n) => !n.parentId);
+
+      function pathTo(id) {
+        const out = [];
+        let cur = byId(id);
+        while (cur) {
+          out.unshift(cur);
+          cur = cur.parentId ? byId(cur.parentId) : null;
+        }
+        return out;
+      }
+
+      function deepestUnder(id) {
+        let cur = byId(id);
+        while (cur) {
+          const kids = kidsOf(cur.id);
+          if (!kids.length) return cur;
+          cur = kids[0];
+        }
+        return byId(id);
+      }
+
+      function escapeHtml(v) {
+        return String(v ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function shortTopic(question) {
+        const clean = String(question || "")
+          .replace(/^[「『"]|[」』"]?[？?。]*$/g, "")
+          .trim();
+        return clean.length > 12 ? `${clean.slice(0, 12)}…` : clean || "新的一轮";
+      }
+
+      let toastTimer;
+      function toast(msg) {
+        el.toast.textContent = msg;
+        el.toast.classList.add("on");
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(() => el.toast.classList.remove("on"), 2000);
+      }
+
+      /* ---------------- asking ---------------- */
+      function askFrom(parentId, question, topic) {
+        const parent = byId(parentId);
+        if (!parent) return;
+        const willBranch = kidsOf(parentId).length > 0;
+        const key = topic || question;
+        const body = ANSWERS[key] ? ANSWERS[key] : GENERIC(key);
+        const node = makeNode(parentId, question, topic || shortTopic(question), body);
+        node.revealed = 0;
+        state.nodes.push(node);
+        state.currentId = node.id;
+        render();
+        stream(node.id);
+        toast(
+          willBranch
+            ? `已从第 ${pathTo(parentId).length} 轮分出一条支线`
+            : `已接在第 ${pathTo(parentId).length} 轮下面`
+        );
+      }
+
+      function stream(nodeId) {
+        if (state.stream) window.clearInterval(state.stream);
+        const node = byId(nodeId);
+        if (!node) return;
+        const total = node.segments.reduce((sum, seg) => sum + seg.s.length, 0);
+        state.stream = window.setInterval(() => {
+          const live = byId(nodeId);
+          if (!live) {
+            window.clearInterval(state.stream);
+            state.stream = null;
+            return;
+          }
+          live.revealed = Math.min(total, (live.revealed || 0) + 4);
+          paint(nodeId);
+          if (live.revealed >= total) {
+            window.clearInterval(state.stream);
+            state.stream = null;
+            live.revealed = Infinity;
+            paint(nodeId);
+          }
+        }, 18);
+      }
+
+      function answerHtml(node) {
+        const limit = node.revealed;
+        const streaming = Number.isFinite(limit);
+        let used = 0;
+        let html = "";
+        for (const seg of node.segments) {
+          if (streaming && used >= limit) break;
+          const take = streaming ? Math.max(0, Math.min(seg.s.length, limit - used)) : seg.s.length;
+          const chunk = seg.s.slice(0, take);
+          if (seg.kind === "term") {
+            const asked = kidsOf(node.id).some((kid) => kid.topic === seg.s);
+            html += `<button type="button" class="term${asked ? " used" : ""}" data-term="${escapeHtml(
+              seg.s
+            )}" data-node="${node.id}" title="${asked ? "已展开过，再点会新建支线" : "点开这个概念"}">${escapeHtml(
+              chunk
+            )}</button>`;
+          } else {
+            html += escapeHtml(chunk);
+          }
+          used += take;
+        }
+        if (streaming) html += '<span class="caret"></span>';
+        return html;
+      }
+
+      function paint(nodeId) {
+        const node = byId(nodeId);
+        const host = el.rounds.querySelector(`[data-answer-for="${nodeId}"]`);
+        if (!node || !host) return;
+        host.innerHTML = answerHtml(node);
+        const round = host.closest(".round");
+        if (round) round.scrollIntoView({ block: "end", behavior: "auto" });
+      }
+
+      /* ---------------- render: rounds ---------------- */
+      function render() {
+        const path = pathTo(state.currentId);
+        const current = byId(state.currentId);
+
+        el.rounds.replaceChildren();
+        path.forEach((node, index) => {
+          const round = document.createElement("article");
+          round.className = "round";
+          round.dataset.node = node.id;
+          if (node.id === state.currentId) round.classList.add("pinned");
+
+          const qRow = document.createElement("div");
+          qRow.className = "q-row";
+          const bubble = document.createElement("div");
+          bubble.className = "q-bubble";
+          bubble.textContent = node.question;
+          qRow.append(bubble);
+
+          const answer = document.createElement("p");
+          answer.className = "a-body";
+          answer.dataset.answerFor = node.id;
+          answer.innerHTML = answerHtml(node);
+
+          const tools = document.createElement("div");
+          tools.className = "round-tools";
+          const tag = document.createElement("span");
+          tag.className = "tag";
+          tag.textContent = `第 ${index + 1} 轮`;
+          tools.append(tag);
+          if (node.id !== state.currentId) {
+            const back = document.createElement("button");
+            back.type = "button";
+            back.className = "mini-btn";
+            back.textContent = "↩ 回到这一轮";
+            back.addEventListener("click", () => {
+              state.currentId = node.id;
+              render();
+              el.input.focus();
+              toast(`已回到第 ${index + 1} 轮，直接提问会新建支线`);
+            });
+            tools.append(back);
+          }
+          if (node.marked) {
+            const m = document.createElement("span");
+            m.className = "tag";
+            m.style.color = "var(--mark)";
+            m.textContent = "● 已标记";
+            tools.append(m);
+          }
+
+          round.append(qRow, answer, tools);
+
+          // 同一轮下面有多条后续 → 支线切换器
+          const kids = kidsOf(node.id);
+          const nextOnPath = path[index + 1];
+          if (kids.length > 1) {
+            const chips = document.createElement("div");
+            chips.className = "branch-chips";
+            const lead = document.createElement("span");
+            lead.className = "lead";
+            lead.textContent = `这一轮下面有 ${kids.length} 条线：`;
+            chips.append(lead);
+            kids.forEach((kid, kidIndex) => {
+              const chip = document.createElement("button");
+              chip.type = "button";
+              chip.className = "chip";
+              if (nextOnPath && nextOnPath.id === kid.id) chip.classList.add("on");
+              chip.textContent = `${kidIndex === 0 ? "主线" : `支线 ${kidIndex}`} · ${kid.topic}`;
+              chip.addEventListener("click", () => {
+                state.currentId = deepestUnder(kid.id).id;
+                render();
+              });
+              chips.append(chip);
+            });
+            round.append(chips);
+          }
+
+          el.rounds.append(round);
+        });
+
+        // 回溯到中间轮时，提示后面还有内容
+        const kidsOfCurrent = kidsOf(state.currentId);
+        if (kidsOfCurrent.length) {
+          const hint = document.createElement("div");
+          hint.className = "tail-hint";
+          hint.innerHTML = `这一轮后面已经有 ${kidsOfCurrent.length} 条后续。<b style="color:var(--text-soft)">直接在下面提问，会从这里新分出一条支线</b>，原来的线不会被覆盖。`;
+          const row = document.createElement("div");
+          row.className = "row";
+          kidsOfCurrent.forEach((kid, i) => {
+            const go = document.createElement("button");
+            go.type = "button";
+            go.className = "mini-btn";
+            go.textContent = `↓ ${i === 0 ? "继续主线" : `支线 ${i}`}：${kid.topic}`;
+            go.addEventListener("click", () => {
+              state.currentId = deepestUnder(kid.id).id;
+              render();
+            });
+            row.append(go);
+          });
+          hint.append(row);
+          el.rounds.append(hint);
+        }
+
+        el.composer.classList.toggle("branching", kidsOfCurrent.length > 0);
+        el.input.placeholder = kidsOfCurrent.length
+          ? "从这一轮提问将新建一条支线…"
+          : "继续追问…";
+        el.markBtn.classList.toggle("on", Boolean(current?.marked));
+        el.deleteBtn.disabled = !current?.parentId;
+
+        renderMap();
+        if (state.graphOpen) renderGraph();
+
+        const total = state.nodes.length;
+        const branches = state.nodes.filter((n) => kidsOf(n.id).length > 1).length;
+        el.stat.textContent = `共 ${total} 轮 · ${branches} 个分叉点 · 当前第 ${path.length} 轮`;
+
+        window.requestAnimationFrame(() => {
+          const last = el.rounds.lastElementChild;
+          if (last) last.scrollIntoView({ block: "end", behavior: "auto" });
+        });
+      }
+
+      /* ---------------- render: minimap ---------------- */
+      function mapLayout() {
+        const rows = [];
+        const lanes = new Map();
+        let laneCursor = 0;
+        const walk = (node, lane) => {
+          lanes.set(node.id, lane);
+          rows.push(node.id);
+          const kids = kidsOf(node.id);
+          kids.forEach((kid, i) => {
+            walk(kid, i === 0 ? lane : (laneCursor += 1));
+          });
+        };
+        const root = rootNode();
+        if (root) walk(root, 0);
+        return { rows, lanes, laneCount: laneCursor + 1 };
+      }
+
+      /* 当前这条线：root → current，再顺着默认后续延伸下去（延伸段画虚线） */
+      function activeLine() {
+        const path = pathTo(state.currentId);
+        const rows = [...path];
+        let cur = kidsOf(state.currentId)[0];
+        while (cur) {
+          rows.push(cur);
+          cur = kidsOf(cur.id)[0];
+        }
+        return { rows, aheadFrom: path.length };
+      }
+
+      let popEl = null;
+      function closeBranchPop() {
+        popEl?.remove();
+        popEl = null;
+      }
+
+      /* 支线徽标：≤5 条画小方块并高亮当前所在那条，>5 条退回数字 */
+      const PIP_LIMIT = 5;
+      const badgeMemory = new Map();
+
+      function buildBadge(node, children, activeIndex) {
+        const usePips = children.length <= PIP_LIMIT;
+        const badge = document.createElement("button");
+        badge.type = "button";
+        badge.className = "map-badge";
+
+        if (usePips) {
+          for (let i = 0; i < children.length; i += 1) {
+            const pip = document.createElement("span");
+            pip.className = i === activeIndex ? "pip on" : "pip";
+            badge.append(pip);
+          }
+          badge.title =
+            activeIndex >= 0
+              ? `这一轮有 ${children.length} 条线，当前在第 ${activeIndex + 1} 条`
+              : `这一轮有 ${children.length} 条线`;
+        } else {
+          const num = document.createElement("span");
+          num.className = "num";
+          num.textContent = activeIndex >= 0 ? `${activeIndex + 1}/${children.length}` : `⑂${children.length}`;
+          badge.append(num);
+          badge.title =
+            activeIndex >= 0
+              ? `这一轮有 ${children.length} 条线，当前在第 ${activeIndex + 1} 条`
+              : `这一轮有 ${children.length} 条线`;
+        }
+
+        const signature = `${usePips ? "pip" : "num"}:${children.length}:${activeIndex}`;
+        if (badgeMemory.has(node.id) && badgeMemory.get(node.id) !== signature) {
+          badge.classList.add("morph");
+        }
+        badgeMemory.set(node.id, signature);
+        return badge;
+      }
+
+      function openBranchPop(anchor, node, children, activeIndex) {
+        closeBranchPop();
+        popEl = document.createElement("div");
+        popEl.className = "branch-pop";
+        const head = document.createElement("div");
+        head.className = "pop-head";
+        head.textContent = `第 ${pathTo(node.id).length} 轮往下有 ${children.length} 条线`;
+        popEl.append(head);
+        children.forEach((kid, index) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          if (index === activeIndex) btn.classList.add("on");
+          btn.textContent = `${index + 1}. ${kid.topic}${index === activeIndex ? "　· 当前" : ""}`;
+          btn.addEventListener("click", () => {
+            closeBranchPop();
+            state.currentId = deepestUnder(kid.id).id;
+            render();
+          });
+          popEl.append(btn);
+        });
+        document.body.append(popEl);
+        const a = anchor.getBoundingClientRect();
+        const p = popEl.getBoundingClientRect();
+        let left = a.left - p.width - 8;
+        if (left < 8) left = Math.min(a.right + 8, window.innerWidth - p.width - 8);
+        let top = a.top - 6;
+        if (top + p.height > window.innerHeight - 8) top = window.innerHeight - p.height - 8;
+        popEl.style.left = `${Math.max(8, left)}px`;
+        popEl.style.top = `${Math.max(8, top)}px`;
+      }
+
+      function renderMap() {
+        closeBranchPop();
+        el.minimap.dataset.style = state.mapStyle;
+        el.mapInner.querySelectorAll(".map-node, .map-label, .map-badge").forEach((n) => n.remove());
+
+        if (state.mapStyle === "tree") renderMapTree();
+        else renderMapSpine(state.mapStyle === "rail");
+
+        el.mapLabel.textContent = `对话路径 · 共 ${state.nodes.length} 轮`;
+        el.mapToggle.textContent = state.expanded ? "‹" : "›";
+        el.mapToggle.title = state.expanded ? "收起图例" : "展开图例";
+
+        const currentDot = el.mapInner.querySelector(".map-node.current");
+        if (currentDot) {
+          el.mapScroll.scrollTo({
+            top: Math.max(0, currentDot.offsetTop - el.mapScroll.clientHeight / 2),
+            behavior: "smooth"
+          });
+        }
+      }
+
+      /* 单线 / 细条：只画当前这条线，别的支线收成一个「⑂N」徽标 */
+      function renderMapSpine(compact) {
+        const expanded = state.expanded;
+        const { rows, aheadFrom } = activeLine();
+        // 收起时也把线放在左侧，给右边的支线徽标留出位置
+        const x = 26;
+        const ROW = compact ? (expanded ? 42 : 36) : expanded ? 62 : 54;
+        const FAR = compact ? 22 : ROW;
+        const padY = 20;
+        const firstFull = compact ? Math.max(0, rows.length - 6) : 0;
+
+        const pos = new Map();
+        let y = padY;
+        rows.forEach((node, index) => {
+          const far = index < firstFull;
+          pos.set(node.id, { y, far });
+          y += far ? FAR : ROW;
+        });
+
+        const lastY = rows.length ? pos.get(rows[rows.length - 1].id).y : padY;
+        el.mapInner.style.height = `${lastY + padY}px`;
+
+        // 一条通到底的连续线，比每段一画要干净
+        const paths = [];
+        if (rows.length > 1) {
+          const splitIndex = Math.max(0, aheadFrom - 1);
+          const splitY = pos.get(rows[splitIndex].id).y;
+          paths.push(`<path class="map-link spine" d="M ${x} ${pos.get(rows[0].id).y} L ${x} ${splitY}" />`);
+          if (splitIndex < rows.length - 1) {
+            paths.push(`<path class="map-link ahead" d="M ${x} ${splitY} L ${x} ${lastY}" />`);
+          }
+        }
+        el.mapLinks.innerHTML = paths.join("");
+
+        rows.forEach((node, index) => {
+          const p = pos.get(node.id);
+          const ahead = index >= aheadFrom;
+          const dot = document.createElement("button");
+          dot.type = "button";
+          dot.className = "map-node on";
+          if (node.id === state.currentId) dot.classList.add("current");
+          if (ahead) dot.classList.add("ahead");
+          if (p.far) dot.classList.add("far");
+          if (node.marked) dot.classList.add("marked");
+          dot.style.left = `${x}px`;
+          dot.style.top = `${p.y}px`;
+          dot.title = `第 ${index + 1} 轮 · ${node.topic}`;
+          dot.addEventListener("click", () => {
+            state.currentId = node.id;
+            render();
+          });
+          el.mapInner.append(dot);
+
+          const children = kidsOf(node.id);
+          const activeIndex = children.findIndex((kid) => rows.some((row) => row.id === kid.id));
+          const forked = children.length > 1;
+          if (forked) {
+            const badge = buildBadge(node, children, activeIndex);
+            badge.style.left = `${x + (compact ? 11 : 13)}px`;
+            badge.style.top = `${p.y}px`;
+            badge.addEventListener("click", (event) => {
+              event.stopPropagation();
+              openBranchPop(badge, node, children, activeIndex);
+            });
+            el.mapInner.append(badge);
+          }
+
+          if (expanded && !p.far) {
+            const label = document.createElement("div");
+            label.className = "map-label";
+            if (!ahead) label.classList.add("on");
+            label.style.left = `${x + (forked ? 24 + Math.min(children.length, PIP_LIMIT) * 9 : 26)}px`;
+            label.style.top = `${p.y}px`;
+            label.innerHTML = `<span class="n">第 ${index + 1} 轮${ahead ? " · 未展开" : ""}</span><span class="t">${escapeHtml(
+              node.topic
+            )}</span>`;
+            label.addEventListener("click", () => {
+              state.currentId = node.id;
+              render();
+            });
+            el.mapInner.append(label);
+          }
+        });
+      }
+
+      function renderMapTree() {
+        const expanded = state.expanded;
+        const { rows, lanes, laneCount } = mapLayout();
+        const onPath = new Set(pathTo(state.currentId).map((n) => n.id));
+
+        // 收起时最多画 3 条道、展开时 4 条，更深的分支并到最外侧那条，
+        // 否则支线一多就会顶出窄条的边界
+        const ROW = expanded ? 58 : 46;
+        const LANE = expanded ? 24 : 22;
+        const maxLane = expanded ? 3 : 2;
+        const padX = expanded ? 24 : 22;
+        const padY = 18;
+        const laneX = (id) => padX + Math.min(lanes.get(id) || 0, maxLane) * LANE;
+        const labelX = padX + maxLane * LANE + 24;
+
+        const pos = new Map();
+        rows.forEach((id, index) => {
+          pos.set(id, { x: laneX(id), y: padY + index * ROW });
+        });
+
+        el.mapInner.style.height = `${padY * 2 + Math.max(0, rows.length - 1) * ROW}px`;
+
+        const paths = [];
+        for (const node of state.nodes) {
+          if (!node.parentId) continue;
+          const from = pos.get(node.parentId);
+          const to = pos.get(node.id);
+          if (!from || !to) continue;
+          const hot = onPath.has(node.id) && onPath.has(node.parentId);
+          if (Math.abs(from.x - to.x) < 0.5) {
+            paths.push(
+              `<path class="map-link${hot ? " on" : ""}" d="M ${from.x} ${from.y} L ${to.x} ${to.y}" />`
+            );
+          } else {
+            const midY = from.y + (to.y - from.y) * 0.55;
+            paths.push(
+              `<path class="map-link${hot ? " on" : ""}" d="M ${from.x} ${from.y} C ${from.x} ${midY}, ${
+                to.x
+              } ${from.y + (to.y - from.y) * 0.25}, ${to.x} ${to.y}" />`
+            );
+          }
+        }
+        el.mapLinks.innerHTML = paths.join("");
+
+        rows.forEach((id, index) => {
+          const node = byId(id);
+          const p = pos.get(id);
+          const dot = document.createElement("button");
+          dot.type = "button";
+          dot.className = "map-node";
+          if (onPath.has(id)) dot.classList.add("on");
+          if (id === state.currentId) dot.classList.add("current");
+          if (node.marked) dot.classList.add("marked");
+          dot.style.left = `${p.x}px`;
+          dot.style.top = `${p.y}px`;
+          dot.title = `第 ${pathTo(id).length} 轮 · ${node.topic}`;
+          dot.addEventListener("click", () => {
+            state.currentId = id;
+            render();
+          });
+          el.mapInner.append(dot);
+
+          if (expanded) {
+            const label = document.createElement("div");
+            label.className = "map-label";
+            if (onPath.has(id)) label.classList.add("on");
+            label.style.left = `${labelX}px`;
+            label.style.top = `${p.y}px`;
+            label.innerHTML = `<span class="n">第 ${pathTo(id).length} 轮${
+              lanes.get(id) ? " · 支线" : ""
+            }</span><span class="t">${escapeHtml(node.topic)}</span>`;
+            label.addEventListener("click", () => {
+              state.currentId = id;
+              render();
+            });
+            el.mapInner.append(label);
+          }
+        });
+
+      }
+
+      /* ---------------- 全部展开：整页无限画布（简化版知识图谱） ---------------- */
+      const graph = {
+        overlay: document.getElementById("graphOverlay"),
+        stage: document.getElementById("graphStage"),
+        world: document.getElementById("graphWorld"),
+        links: document.getElementById("graphLinks"),
+        zoomLabel: document.getElementById("graphZoomLabel"),
+        stat: document.getElementById("graphStat")
+      };
+
+      function openGraph() {
+        state.graphOpen = true;
+        graph.overlay.hidden = false;
+        closeBranchPop();
+        renderGraph();
+        centerOnCurrent();
+      }
+
+      function closeGraph() {
+        state.graphOpen = false;
+        graph.overlay.hidden = true;
+      }
+
+      function renderGraph() {
+        const onPath = new Set(pathTo(state.currentId).map((n) => n.id));
+        graph.world.querySelectorAll(".graph-node").forEach((n) => n.remove());
+
+        for (const node of state.nodes) {
+          const children = kidsOf(node.id);
+          const card = document.createElement("button");
+          card.type = "button";
+          card.className = "graph-node";
+          card.dataset.nodeId = node.id;
+          card.title = node.question;
+          if (onPath.has(node.id)) card.classList.add("on");
+          if (node.id === state.currentId) card.classList.add("current");
+
+          const n = document.createElement("span");
+          n.className = "n";
+          n.textContent = `第 ${pathTo(node.id).length} 轮${node.parentId ? "" : " · 起点"}`;
+          const t = document.createElement("span");
+          t.className = "t";
+          t.textContent = node.question;
+          card.append(n, t);
+
+          if (children.length > 1 || node.marked) {
+            const row = document.createElement("span");
+            row.className = "row";
+            if (children.length > 1) {
+              const activeIndex = children.findIndex((kid) => onPath.has(kid.id));
+              const fork = document.createElement("span");
+              fork.className = "fork";
+              if (children.length <= PIP_LIMIT) {
+                for (let i = 0; i < children.length; i += 1) {
+                  const pip = document.createElement("span");
+                  pip.className = i === activeIndex ? "pip on" : "pip";
+                  fork.append(pip);
+                }
+              } else {
+                const num = document.createElement("span");
+                num.className = "num";
+                num.style.color = "var(--accent)";
+                num.textContent = `⑂${children.length}`;
+                fork.append(num);
+              }
+              row.append(fork);
+            }
+            if (node.marked) {
+              const dot = document.createElement("span");
+              dot.className = "marked-dot";
+              row.append(dot);
+            }
+            card.append(row);
+          }
+
+          card.addEventListener("click", () => {
+            state.currentId = node.id;
+            closeGraph();
+            render();
+            toast(`已跳到第 ${pathTo(node.id).length} 轮 · ${node.topic}`);
+          });
+          graph.world.append(card);
+        }
+
+        layoutGraph();
+        const forks = state.nodes.filter((n) => kidsOf(n.id).length > 1).length;
+        graph.stat.textContent = `${state.nodes.length} 个节点 · ${forks} 个分叉`;
+      }
+
+      function layoutGraph() {
+        const cards = new Map();
+        graph.world.querySelectorAll(".graph-node").forEach((card) => {
+          cards.set(card.dataset.nodeId, card);
+        });
+
+        const NODE_W = 190;
+        const GAP_X = 88;
+        const GAP_Y = 20;
+        const boxes = new Map();
+        const depthFloor = [];
+        let leafCursor = 0;
+
+        const place = (node, depth) => {
+          const card = cards.get(node.id);
+          if (!card) return null;
+          const h = card.offsetHeight;
+          const kids = kidsOf(node.id);
+          const kidBoxes = kids.map((kid) => place(kid, depth + 1)).filter(Boolean);
+          let y;
+          if (kidBoxes.length) {
+            const first = kidBoxes[0];
+            const last = kidBoxes[kidBoxes.length - 1];
+            y = (first.y + first.h / 2 + last.y + last.h / 2) / 2 - h / 2;
+          } else {
+            y = leafCursor;
+            leafCursor += h + GAP_Y;
+          }
+          const floor = depthFloor[depth] || 0;
+          if (y < floor) y = floor;
+          depthFloor[depth] = y + h + GAP_Y;
+          const box = { id: node.id, x: depth * (NODE_W + GAP_X), y, w: NODE_W, h };
+          boxes.set(node.id, box);
+          return box;
+        };
+
+        const root = rootNode();
+        if (root) place(root, 0);
+
+        for (const [id, box] of boxes) {
+          const card = cards.get(id);
+          card.style.left = `${box.x}px`;
+          card.style.top = `${box.y}px`;
+        }
+
+        const onPath = new Set(pathTo(state.currentId).map((n) => n.id));
+        const paths = [];
+        for (const node of state.nodes) {
+          if (!node.parentId) continue;
+          const from = boxes.get(node.parentId);
+          const to = boxes.get(node.id);
+          if (!from || !to) continue;
+          const x1 = from.x + from.w;
+          const y1 = from.y + from.h / 2;
+          const x2 = to.x;
+          const y2 = to.y + to.h / 2;
+          const mid = x1 + (x2 - x1) / 2;
+          const hot = onPath.has(node.id) && onPath.has(node.parentId);
+          paths.push(
+            `<path class="graph-link${hot ? " on" : ""}" d="M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}" />`
+          );
+        }
+        graph.links.innerHTML = paths.join("");
+        graph.boxes = boxes;
+        applyGraphTransform();
+      }
+
+      function applyGraphTransform() {
+        const { x, y, scale } = state.graph;
+        graph.world.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+        graph.zoomLabel.textContent = `${Math.round(scale * 100)}%`;
+      }
+
+      function centerOnCurrent() {
+        const box = graph.boxes?.get(state.currentId);
+        const rect = graph.stage.getBoundingClientRect();
+        state.graph.scale = 1;
+        if (box) {
+          state.graph.x = rect.width / 2 - (box.x + box.w / 2);
+          state.graph.y = rect.height / 2 - (box.y + box.h / 2);
+        } else {
+          state.graph.x = 60;
+          state.graph.y = 60;
+        }
+        applyGraphTransform();
+      }
+
+      function zoomGraph(nextScale, cx, cy) {
+        const clamped = Math.max(0.35, Math.min(2.2, nextScale));
+        const rect = graph.stage.getBoundingClientRect();
+        const px = cx ?? rect.width / 2;
+        const py = cy ?? rect.height / 2;
+        const k = clamped / state.graph.scale;
+        state.graph.x = px - (px - state.graph.x) * k;
+        state.graph.y = py - (py - state.graph.y) * k;
+        state.graph.scale = clamped;
+        applyGraphTransform();
+      }
+
+      document.getElementById("graphOpen").addEventListener("click", openGraph);
+      document.getElementById("graphClose").addEventListener("click", closeGraph);
+      document.getElementById("graphFit").addEventListener("click", centerOnCurrent);
+      document.getElementById("graphZoomIn").addEventListener("click", () => zoomGraph(state.graph.scale + 0.15));
+      document.getElementById("graphZoomOut").addEventListener("click", () => zoomGraph(state.graph.scale - 0.15));
+      graph.zoomLabel.addEventListener("click", centerOnCurrent);
+
+      let panning = null;
+      graph.stage.addEventListener("mousedown", (event) => {
+        if (event.target.closest(".graph-node")) return;
+        panning = { x: event.clientX, y: event.clientY, ox: state.graph.x, oy: state.graph.y };
+        graph.stage.classList.add("grabbing");
+      });
+      window.addEventListener("mousemove", (event) => {
+        if (!panning) return;
+        state.graph.x = panning.ox + (event.clientX - panning.x);
+        state.graph.y = panning.oy + (event.clientY - panning.y);
+        applyGraphTransform();
+      });
+      window.addEventListener("mouseup", () => {
+        panning = null;
+        graph.stage.classList.remove("grabbing");
+      });
+      graph.stage.addEventListener(
+        "wheel",
+        (event) => {
+          event.preventDefault();
+          const rect = graph.stage.getBoundingClientRect();
+          const step = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+          zoomGraph(state.graph.scale * step, event.clientX - rect.left, event.clientY - rect.top);
+        },
+        { passive: false }
+      );
+
+      /* ---------------- events ---------------- */
+      el.rounds.addEventListener("click", (event) => {
+        const term = event.target.closest(".term");
+        if (!term) return;
+        askFrom(term.dataset.node, `「${term.dataset.term}」是什么？`, term.dataset.term);
+      });
+
+      function submit() {
+        const value = el.input.value.trim();
+        if (!value) return;
+        el.input.value = "";
+        askFrom(state.currentId, value, null);
+      }
+      el.send.addEventListener("click", submit);
+      el.input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          submit();
+        }
+      });
+
+      function syncSegs() {
+        document.querySelectorAll("#styleSeg button").forEach((b) => {
+          b.setAttribute("aria-pressed", String(b.dataset.style === state.mapStyle));
+        });
+        document.querySelectorAll("#themeSeg button").forEach((b) => {
+          b.setAttribute("aria-pressed", String(b.dataset.theme === state.theme));
+        });
+        document.body.dataset.theme = state.theme;
+      }
+
+      document.querySelectorAll("#styleSeg button").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.mapStyle = button.dataset.style;
+          syncSegs();
+          renderMap();
+        });
+      });
+
+      document.querySelectorAll("#themeSeg button").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.theme = button.dataset.theme;
+          syncSegs();
+        });
+      });
+
+      document.addEventListener("click", (event) => {
+        if (!popEl) return;
+        if (event.target.closest(".branch-pop, .map-badge")) return;
+        closeBranchPop();
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        if (popEl) {
+          closeBranchPop();
+          return;
+        }
+        if (state.graphOpen) closeGraph();
+      });
+
+      el.mapToggle.addEventListener("click", () => {
+        state.expanded = !state.expanded;
+        el.minimap.dataset.expanded = String(state.expanded);
+        renderMap();
+      });
+
+      document.getElementById("branchBtn").addEventListener("click", () => {
+        const parent = byId(state.currentId)?.parentId;
+        if (!parent) {
+          toast("第 1 轮就是起点，先往下问几轮再试");
+          return;
+        }
+        state.currentId = parent;
+        render();
+        el.input.focus();
+        toast("已退回上一轮，现在提问会新建支线");
+      });
+
+      el.markBtn.addEventListener("click", () => {
+        const node = byId(state.currentId);
+        if (!node) return;
+        node.marked = !node.marked;
+        render();
+        toast(node.marked ? "已标记这一轮" : "已取消标记");
+      });
+
+      el.deleteBtn.addEventListener("click", () => {
+        const node = byId(state.currentId);
+        if (!node?.parentId) return;
+        const doomed = new Set([node.id]);
+        let grew = true;
+        while (grew) {
+          grew = false;
+          for (const item of state.nodes) {
+            if (item.parentId && doomed.has(item.parentId) && !doomed.has(item.id)) {
+              doomed.add(item.id);
+              grew = true;
+            }
+          }
+        }
+        state.nodes = state.nodes.filter((n) => !doomed.has(n.id));
+        state.currentId = node.parentId;
+        render();
+        toast(`已删除这一轮及其后续（${doomed.size} 轮）`);
+      });
+
+      document.getElementById("resetBtn").addEventListener("click", () => {
+        if (state.stream) window.clearInterval(state.stream);
+        state.stream = null;
+        Object.assign(state, seed());
+        closeBranchPop();
+        render();
+        toast("已重置");
+      });
+
+      syncSegs();
+      render();
+    </script>
+  </body>
+</html>
