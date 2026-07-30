@@ -78,7 +78,16 @@ export function buildThreadContext({
   question = "",
   options = {}
 } = {}) {
-  const contextOptions = resolveContextOptions(options, DEFAULT_THREAD_CONTEXT_OPTIONS);
+  /*
+   * 没有划线 = 没有定位点，于是 current-section / current-chapter / previous-chapters
+   * 这几档全部算不出东西（实测都是空）。这种情况下唯一说得通的范围就是整篇，
+   * 所以直接提到 full-text，而不是让用户以为设置生效了却什么正文都没带。
+   */
+  const documentScope = !highlight;
+  const contextOptions = resolveContextOptions(
+    documentScope ? { ...options, chapterTextScope: "full-text" } : options,
+    DEFAULT_THREAD_CONTEXT_OPTIONS
+  );
   const parts = buildHighlightContextParts({
     documentRecord,
     blocks,
@@ -97,6 +106,11 @@ export function buildThreadContext({
     `schema: ${CONTEXT_SCHEMA_VERSION}`,
     "mode: question_answer",
     `document.title: ${title}`,
+    documentScope
+      ? `question.scope: whole_document (no highlight was made; the full document text is included below: ${
+          parts.fullTextBlocks?.length || 0
+        } blocks)`
+      : "question.scope: highlight (the reader selected the text in highlight.selected_text)",
     `highlight.id: ${highlight?.id || ""}`,
     `thread.id: ${thread?.id || highlight?.threadId || ""}`,
     contextOptions.includeChapterTitle && parts.chapterTitle ? `current chapter title: ${parts.chapterTitle}` : "",
@@ -380,7 +394,10 @@ export function buildKnowledgeItems({
 } = {}) {
   const orderedBlocks = normalizeBlocks(blocks);
   const blocksById = new Map(orderedBlocks.map((block) => [block.id, block]));
-  const threadsByHighlightId = new Map((threads || []).map((thread) => [thread.highlightId, thread]));
+  const highlightsById = new Map((highlights || []).filter((item) => item?.id).map((item) => [item.id, item]));
+  const threadsByHighlightId = new Map(
+    (threads || []).filter((thread) => thread?.highlightId).map((thread) => [thread.highlightId, thread])
+  );
   const summariesByThreadId = groupSummariesByThreadId(summaries);
   const resolvedOptions = resolveContextOptions(options, DEFAULT_KNOWLEDGE_CONTEXT_OPTIONS);
   const knowledgeOptions = {
@@ -392,38 +409,65 @@ export function buildKnowledgeItems({
     qaHistoryScope: "current-thread"
   };
 
-  return (highlights || [])
-    .map((highlight) => {
-      const thread = threadsByHighlightId.get(highlight.id);
-      const messages = thread ? messagesByThread?.[thread.id] || [] : [];
-      const selectedBlock = blocksById.get(highlight?.blockId);
-      const parts = buildHighlightContextParts({
-        documentRecord,
-        blocks: orderedBlocks,
-        highlight,
-        thread,
-        messages,
-        highlights,
-        threads,
-        messagesByThread,
-        summaries,
-        options: knowledgeOptions
-      });
-      return {
-        highlight,
-        thread,
-        parts,
-        summaries: thread ? summariesByThreadId.get(thread.id) || [] : [],
-        blockOrder: getBlockOrder(selectedBlock, highlight),
-        startOffset: getHighlightStartOffset(highlight, selectedBlock)
-      };
-    })
-    .sort(
-      (a, b) =>
-        a.blockOrder - b.blockOrder ||
-        a.startOffset - b.startOffset ||
-        String(a.highlight?.createdAt || "").localeCompare(String(b.highlight?.createdAt || ""))
-    );
+  /*
+   * 按 context 条目遍历，不再按 highlight 遍历。
+   * 今天一条 thread 就是一个 context 条目：要么锚在某条划线上，要么锚在整篇。
+   * 原来是 highlights.map()，于是全文提问（没有 highlight）永远进不了知识图谱。
+   * 遍历顺序和 knowledge.js 里证据列表的做法保持一致：先 thread，再补没有 thread 的孤立划线。
+   */
+  const makeItem = ({ highlight, thread }) => {
+    const messages = thread ? messagesByThread?.[thread.id] || [] : [];
+    const selectedBlock = highlight ? blocksById.get(highlight.blockId) : null;
+    const parts = buildHighlightContextParts({
+      documentRecord,
+      blocks: orderedBlocks,
+      highlight: highlight || null,
+      thread,
+      messages,
+      highlights,
+      threads,
+      messagesByThread,
+      summaries,
+      options: knowledgeOptions
+    });
+    return {
+      scope: highlight ? "highlight" : "document",
+      highlight: highlight || null,
+      thread: thread || null,
+      parts,
+      summaries: thread ? summariesByThreadId.get(thread.id) || [] : [],
+      // 全文条目没有位置，排到最后，靠 createdAt 稳定排序
+      blockOrder: highlight ? getBlockOrder(selectedBlock, highlight) : Number.MAX_SAFE_INTEGER,
+      startOffset: highlight ? getHighlightStartOffset(highlight, selectedBlock) : Number.MAX_SAFE_INTEGER,
+      createdAt: thread?.createdAt || highlight?.createdAt || ""
+    };
+  };
+
+  const items = [];
+  const claimedHighlightIds = new Set();
+  for (const thread of threads || []) {
+    if (!thread?.id) {
+      continue;
+    }
+    const highlight = thread.highlightId ? highlightsById.get(thread.highlightId) : null;
+    if (highlight) {
+      claimedHighlightIds.add(highlight.id);
+    }
+    items.push(makeItem({ highlight, thread }));
+  }
+  for (const highlight of highlights || []) {
+    if (!highlight?.id || claimedHighlightIds.has(highlight.id) || threadsByHighlightId.has(highlight.id)) {
+      continue;
+    }
+    items.push(makeItem({ highlight, thread: null }));
+  }
+
+  return items.sort(
+    (a, b) =>
+      a.blockOrder - b.blockOrder ||
+      a.startOffset - b.startOffset ||
+      String(a.createdAt).localeCompare(String(b.createdAt))
+  );
 }
 
 export function getBlockText(block) {
@@ -468,13 +512,17 @@ export function clipText(value, maxLength) {
 }
 
 function formatKnowledgeItem(item, index, options) {
+  const documentScope = item.scope === "document" || !item.highlight;
   const header = [
     `evidence_cluster.index: ${index}`,
-    "evidence_cluster.role: one highlight plus its local source text and Q&A trail",
+    documentScope
+      ? "evidence_cluster.role: a whole-document question plus its Q&A trail; this cluster has no highlighted text"
+      : "evidence_cluster.role: one highlight plus its local source text and Q&A trail",
+    `evidence_cluster.scope: ${documentScope ? "whole_document" : "highlight"}`,
     `highlight.id: ${item.highlight?.id || ""}`,
     `thread.id: ${item.thread?.id || item.highlight?.threadId || ""}`,
     options.includeChapterTitle && item.parts.chapterTitle ? `current chapter title: ${item.parts.chapterTitle}` : "",
-    `position: blockOrder=${item.blockOrder}; start=${item.startOffset}`
+    documentScope ? "" : `position: blockOrder=${item.blockOrder}; start=${item.startOffset}`
   ].filter(Boolean).join("\n");
   let text = appendSection("", "metadata", header, { role: "cluster_metadata" });
   text = appendSection(text, "highlight.selected_text", item.parts.selectedText, {

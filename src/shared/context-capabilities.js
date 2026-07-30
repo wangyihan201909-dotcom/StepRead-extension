@@ -47,6 +47,38 @@ export function analyzeContextCapabilities({
   const textBlocks = orderedBlocks.filter((block) => getBlockText(block));
   const beforeLastHighlightBlocks = getBeforeLastHighlightBlocks(orderedBlocks, highlights);
 
+  /*
+   * 两组 flag 语义不同，不能混用：
+   * sources 带 fallback —— 「这份文档理论上能不能提供这类证据」。设置页据此决定
+   *   选项是否置灰：一份有标题层级的文档，就该允许你勾「当前章节」。
+   * requestSources 不带 fallback —— 「本次请求实际能提供什么」。上下文包里那段
+   *   写给模型的证据声明必须用这一组，否则无划线提问时会声称章节正文可用，
+   *   而包里其实一个字都没有，等于骗模型。
+   */
+  const sources = {
+    selectedText: Boolean(selectedText),
+    selectedBlock: selectedBlocks.some((block) => getBlockText(block)),
+    adjacentBlocks: [...previousBlocks, ...nextBlocks].some((block) => getBlockText(block)),
+    fullText: textBlocks.length > 0,
+    outline: documentOutline.length > 0,
+    chapterTitle: firstSelectedIndex >= 0 ? Boolean(chapterTitle) : hasHeadingBoundary,
+    currentSectionBlocks: firstSelectedIndex >= 0 ? currentSectionRange.blocks.length > 0 : hasHeadingBoundary,
+    currentChapterBlocks: firstSelectedIndex >= 0 ? currentChapterRange.blocks.length > 0 : hasHeadingBoundary,
+    previousChapterBlocks: firstSelectedIndex >= 0 ? previousChapterRange.blocks.length > 0 : hasHeadingBoundary,
+    beforeLastHighlightBlocks: beforeLastHighlightBlocks.length > 0,
+    sectionSummaries: sectionSummaries.length > 0,
+    threadHistory: currentThreadMessages.length > 0 || allThreadMessages.length > 0 || qaSummaries.length > 0,
+    knowledgeHighlights: (highlights || []).some((entry) => Boolean(entry?.id || normalizeContextText(entry?.text)))
+  };
+
+  const requestSources = {
+    ...sources,
+    chapterTitle: Boolean(chapterTitle),
+    currentSectionBlocks: currentSectionRange.blocks.length > 0,
+    currentChapterBlocks: currentChapterRange.blocks.length > 0,
+    previousChapterBlocks: previousChapterRange.blocks.length > 0
+  };
+
   return {
     documentId: documentRecord?.id || highlight?.documentId || thread?.documentId || "",
     hasDocumentRecord: Boolean(documentRecord && typeof documentRecord === "object"),
@@ -72,21 +104,8 @@ export function analyzeContextCapabilities({
       allThreadMessages: allThreadMessages.length,
       qaSummaries: qaSummaries.length
     },
-    sources: {
-      selectedText: Boolean(selectedText),
-      selectedBlock: selectedBlocks.some((block) => getBlockText(block)),
-      adjacentBlocks: [...previousBlocks, ...nextBlocks].some((block) => getBlockText(block)),
-      fullText: textBlocks.length > 0,
-      outline: documentOutline.length > 0,
-      chapterTitle: firstSelectedIndex >= 0 ? Boolean(chapterTitle) : hasHeadingBoundary,
-      currentSectionBlocks: firstSelectedIndex >= 0 ? currentSectionRange.blocks.length > 0 : hasHeadingBoundary,
-      currentChapterBlocks: firstSelectedIndex >= 0 ? currentChapterRange.blocks.length > 0 : hasHeadingBoundary,
-      previousChapterBlocks: firstSelectedIndex >= 0 ? previousChapterRange.blocks.length > 0 : hasHeadingBoundary,
-      beforeLastHighlightBlocks: beforeLastHighlightBlocks.length > 0,
-      sectionSummaries: sectionSummaries.length > 0,
-      threadHistory: currentThreadMessages.length > 0 || allThreadMessages.length > 0 || qaSummaries.length > 0,
-      knowledgeHighlights: (highlights || []).some((entry) => Boolean(entry?.id || normalizeContextText(entry?.text)))
-    },
+    sources,
+    requestSources,
     details: {
       orderedBlocks,
       selectedBlocks,
@@ -273,29 +292,36 @@ export function getBlockText(block) {
   );
 }
 
+/* 旧调用方可能只传了 sources，退回去用它，别炸 */
+function getRequestSources(capabilities) {
+  return capabilities?.requestSources || capabilities?.sources || {};
+}
+
 function getSelectionAvailabilityNotes(capabilities, options, sectionSummariesAvailable) {
   const notes = [];
   const chapterTextScope = normalizeChapterTextScope(options.chapterTextScope, options.includeCurrentChapterBlocks);
+  // 写给模型的声明，一律以「本次实际可用」为准
+  const available = getRequestSources(capabilities);
 
-  if (options.includeDocumentOutline && !capabilities.sources.outline) {
+  if (options.includeDocumentOutline && !available.outline) {
     notes.push("document.outline unavailable: no heading or outline data was provided; do not infer a table of contents.");
   }
-  if (options.includeChapterTitle && !capabilities.sources.chapterTitle) {
-    notes.push("current chapter title unavailable: no heading stack was found for this selection.");
+  if (options.includeChapterTitle && !available.chapterTitle) {
+    notes.push("current chapter title unavailable: no heading stack was found for this request.");
   }
-  if (chapterTextScope === "current-section" && !capabilities.sources.currentSectionBlocks) {
-    notes.push("document.current_section_blocks unavailable: no section heading boundary was found; expanded section text is omitted.");
+  if (chapterTextScope === "current-section" && !available.currentSectionBlocks) {
+    notes.push("document.current_section_blocks unavailable: no section boundary could be resolved for this request; expanded section text is omitted.");
   }
-  if (chapterTextScope === "current-chapter" && !capabilities.sources.currentChapterBlocks) {
-    notes.push("document.current_chapter_blocks unavailable: no chapter heading boundary was found; expanded chapter text is omitted.");
+  if (chapterTextScope === "current-chapter" && !available.currentChapterBlocks) {
+    notes.push("document.current_chapter_blocks unavailable: no chapter boundary could be resolved for this request; expanded chapter text is omitted.");
   }
-  if (chapterTextScope === "previous-chapters" && !capabilities.sources.previousChapterBlocks) {
-    notes.push("document.previous_chapter_blocks unavailable: no earlier chapter blocks were found for this selection.");
+  if (chapterTextScope === "previous-chapters" && !available.previousChapterBlocks) {
+    notes.push("document.previous_chapter_blocks unavailable: no earlier chapter blocks could be resolved for this request.");
   }
-  if (chapterTextScope === "full-text" && !capabilities.sources.fullText) {
+  if (chapterTextScope === "full-text" && !available.fullText) {
     notes.push("document.full_text_blocks unavailable: no readable text blocks are available for this document.");
   }
-  if (options.includeThreadHistory && options.qaHistoryScope !== "none" && !capabilities.sources.threadHistory) {
+  if (options.includeThreadHistory && options.qaHistoryScope !== "none" && !available.threadHistory) {
     notes.push("thread history unavailable: no saved user or assistant messages are available for this document.");
   }
 
@@ -335,31 +361,33 @@ function getKnowledgeAvailabilityNotes(capabilities, options) {
 function getAvailableSelectionSourceNames(capabilities, options = {}) {
   const sources = [];
   const chapterTextScope = normalizeChapterTextScope(options.chapterTextScope, options.includeCurrentChapterBlocks);
-  if (capabilities.sources.selectedText) {
+  // 同上：只列本次真的会出现在包里的段落
+  const available = getRequestSources(capabilities);
+  if (available.selectedText) {
     sources.push("highlight.selected_text");
   }
-  if (options.includeDocumentOutline && capabilities.sources.outline) {
+  if (options.includeDocumentOutline && available.outline) {
     sources.push("document.outline");
   }
-  if (options.includeChapterTitle && capabilities.sources.chapterTitle) {
+  if (options.includeChapterTitle && available.chapterTitle) {
     sources.push("current chapter title");
   }
-  if (options.includeSelectedBlock && capabilities.sources.selectedBlock) {
+  if (options.includeSelectedBlock && available.selectedBlock) {
     sources.push("highlight.selected_blocks");
   }
-  if (options.includeAdjacentBlocks && capabilities.sources.adjacentBlocks) {
+  if (options.includeAdjacentBlocks && available.adjacentBlocks) {
     sources.push("highlight.adjacent_blocks");
   }
-  if (chapterTextScope === "current-section" && capabilities.sources.currentSectionBlocks) {
+  if (chapterTextScope === "current-section" && available.currentSectionBlocks) {
     sources.push("document.current_section_blocks");
   }
-  if (chapterTextScope === "current-chapter" && capabilities.sources.currentChapterBlocks) {
+  if (chapterTextScope === "current-chapter" && available.currentChapterBlocks) {
     sources.push("document.current_chapter_blocks");
   }
-  if (chapterTextScope === "previous-chapters" && capabilities.sources.previousChapterBlocks) {
+  if (chapterTextScope === "previous-chapters" && available.previousChapterBlocks) {
     sources.push("document.previous_chapter_blocks");
   }
-  if (chapterTextScope === "full-text" && capabilities.sources.fullText) {
+  if (chapterTextScope === "full-text" && available.fullText) {
     sources.push("document.full_text_blocks");
   }
   if (options.includeThreadHistory && capabilities.counts.currentThreadMessages > 0) {
