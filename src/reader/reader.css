@@ -2027,6 +2027,32 @@ figcaption {
   padding-bottom: 14px;
 }
 
+/* 这一轮带的划线原文，跟着这一轮显示，而不是挂在面板顶部 */
+.round-quote {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  margin-bottom: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--selection-border);
+  border-left: 3px solid var(--selection-marker);
+  border-radius: 4px;
+  background: var(--selection-bg);
+  color: var(--muted-strong);
+  font-size: var(--app-xs-font-size);
+  line-height: 1.6;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.round-quote:hover {
+  color: var(--text);
+  box-shadow: none;
+  transform: none;
+}
+
 .round-question {
   display: flex;
   justify-content: flex-end;

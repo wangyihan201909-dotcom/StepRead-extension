@@ -76,7 +76,6 @@ const state = {
   selectedLocalEndOffset: -1,
   selectedGlobalStartOffset: -1,
   selectedGlobalEndOffset: -1,
-  panelView: "detail",
   sidebarTab: "documents",
   activeRoundId: "",
   roundTree: null,
@@ -125,11 +124,8 @@ const elements = {
   rightResizer: document.querySelector("#rightResizer"),
   sidebarCollapseButton: document.querySelector("#sidebarCollapseButton"),
   qaPanelTitle: document.querySelector("#qaPanelTitle"),
-  historyLayer: document.querySelector("#historyLayer"),
   detailLayer: document.querySelector("#detailLayer"),
-  panelToggleButton: document.querySelector("#panelToggleButton"),
   knowledgeButton: document.querySelector("#knowledgeButton"),
-  newThreadButton: document.querySelector("#newThreadButton"),
   selectionAskButton: document.querySelector("#selectionAskButton"),
   documentsTab: document.querySelector("#documentsTab"),
   tocTab: document.querySelector("#tocTab"),
@@ -137,7 +133,6 @@ const elements = {
   tocPanel: document.querySelector("#tocPanel"),
   tocCount: document.querySelector("#tocCount"),
   selectionChips: document.querySelector("#selectionChips"),
-  threadList: document.querySelector("#threadList"),
   messageList: document.querySelector("#messageList"),
   composer: document.querySelector(".composer"),
   questionInput: document.querySelector("#questionInput"),
@@ -300,7 +295,6 @@ function resetReaderRuntimeState() {
   state.selectedLocalEndOffset = -1;
   state.selectedGlobalStartOffset = -1;
   state.selectedGlobalEndOffset = -1;
-  state.panelView = "detail";
   state.activeRoundId = "";
   state.roundTree = null;
   closePathCanvas();
@@ -315,7 +309,6 @@ function renderResetCompleteView(summary, { resetSettings = false } = {}) {
   elements.documentList.innerHTML = "";
   elements.tocList.innerHTML = "";
   updateTocCount(0);
-  elements.threadList.innerHTML = "";
   elements.messageList.innerHTML = "";
   if (elements.selectionChips) {
     elements.selectionChips.replaceChildren();
@@ -328,7 +321,6 @@ function renderResetCompleteView(summary, { resetSettings = false } = {}) {
     ? `本地阅读数据和设置已清空。清理明细：${formatClearSummary(summary)}。`
     : `本地阅读数据已清空。清理明细：${formatClearSummary(summary)}。`;
   elements.documentContent.append(empty);
-  renderPanelView();
 }
 
 function renderResetFailedView(error) {
@@ -339,7 +331,6 @@ function renderResetFailedView(error) {
   empty.className = "empty-state";
   empty.textContent = "请关闭其他 StepRead 页面后重新打开 reader.html?resetData=1。";
   elements.documentContent.append(empty);
-  renderPanelView();
 }
 
 function formatClearSummary(summary) {
@@ -387,14 +378,12 @@ function bindEvents() {
   elements.documentList.addEventListener("drop", (event) => handleDocumentDrop(event, ""));
   elements.trashToggle.addEventListener("click", toggleTrashSection);
   elements.documentContextMenu.addEventListener("click", handleContextMenuAction);
-  elements.panelToggleButton.addEventListener("click", handlePanelToggle);
   elements.selectionAskButton.addEventListener("click", openDraftQuestion);
   elements.documentsTab.addEventListener("click", () => setSidebarTab("documents"));
   elements.tocTab.addEventListener("click", () => setSidebarTab("toc"));
   elements.documentsTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.tocTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.knowledgeButton.addEventListener("click", openKnowledgePage);
-  elements.newThreadButton.addEventListener("click", startNewThread);
   elements.sendQuestionButton.addEventListener("click", handleQuestionButtonClick);
   elements.messageList.addEventListener("click", handleMessageListClick);
   elements.pathCanvasButton.addEventListener("click", openPathCanvas);
@@ -670,14 +659,11 @@ async function showPendingPdfSourceView() {
   state.activeThread = null;
   state.activeHighlight = null;
   clearDraftSelection();
-  state.panelView = "detail";
   hideSelectionAskButton();
 
   await persistLastDocument("");
   renderDocument();
-  renderThreads();
   renderSelection();
-  renderPanelView();
   await renderMessages();
   const canReadSource = canFetchPdfSource(sourceInfo.normalizedSourceUrl || sourceInfo.rawSourceUrl || state.sourceUrl);
   setStatus(
@@ -705,14 +691,11 @@ async function showPendingPdfImportView(pendingImport, statusMessage) {
   state.activeThread = null;
   state.activeHighlight = null;
   clearDraftSelection();
-  state.panelView = "detail";
   hideSelectionAskButton();
 
   await persistLastDocument("");
   renderDocument();
-  renderThreads();
   renderSelection();
-  renderPanelView();
   await renderMessages();
   setStatus(statusMessage || "正在处理本地 PDF 导入。");
 }
@@ -738,14 +721,11 @@ async function loadDocument(documentId) {
   state.activeThread = null;
   state.activeHighlight = null;
   clearDraftSelection();
-  state.panelView = "detail";
   hideSelectionAskButton();
 
   await persistLastDocument(documentId);
   renderDocument();
-  renderThreads();
   renderSelection();
-  renderPanelView();
   await renderMessages();
   await focusRequestedHighlight(documentId);
 }
@@ -770,7 +750,7 @@ async function focusRequestedHighlight(documentId) {
     state.threads.find((item) => item.id === highlight.threadId) ||
     state.threads.find((item) => item.highlightId === highlight.id);
   if (thread) {
-    await activateThread(thread.id);
+    await focusRoundForThread(thread.id);
     return;
   }
   scrollHighlightIntoCenter(highlight.id);
@@ -840,14 +820,11 @@ async function clearCurrentDocumentView() {
   state.activeThread = null;
   state.activeHighlight = null;
   clearDraftSelection();
-  state.panelView = "detail";
   hideSelectionAskButton();
 
   await persistLastDocument("");
   renderDocument();
-  renderThreads();
   renderSelection();
-  renderPanelView();
   await renderMessages();
 }
 
@@ -4904,13 +4881,10 @@ async function deleteReadingThread(threadId) {
     state.activeHighlight = null;
     clearDraftSelection();
     elements.questionInput.value = "";
-    state.panelView = "history";
   }
 
   refreshDocumentHighlights();
-  renderThreads();
   renderSelection();
-  renderPanelView();
   await renderMessages();
   notifyKnowledgeDataChanged("thread-deleted");
   setStatus("历史划线已删除。");
@@ -5270,68 +5244,6 @@ function isHighlightRangeValid(range, block) {
   return blockText.includes(selectedText) || normalizePlainText(blockText).includes(normalizePlainText(selectedText));
 }
 
-function renderThreads() {
-  elements.threadList.replaceChildren();
-  const committedHighlights = state.highlights.filter((highlight) => !isDraftHighlight(highlight));
-  const highlightsById = new Map(committedHighlights.map((highlight) => [highlight.id, highlight]));
-  const threads = state.threads.filter((thread) => !isDraftThread(thread)).sort((a, b) => {
-    const highlightA = highlightsById.get(a.highlightId);
-    const highlightB = highlightsById.get(b.highlightId);
-    const positionA = getHighlightSortPosition(highlightA);
-    const positionB = getHighlightSortPosition(highlightB);
-    return positionA - positionB || String(a.createdAt).localeCompare(String(b.createdAt));
-  });
-
-  if (!threads.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty-state";
-    empty.textContent = "还没有历史划线。选中正文后，在右侧输入问题并发送，它才会进入这里。";
-    elements.threadList.append(empty);
-    return;
-  }
-
-  for (const thread of threads) {
-    const highlight = highlightsById.get(thread.highlightId);
-    const row = document.createElement("div");
-    row.className = "thread-row";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "thread-item";
-    if (thread.id === state.activeThread?.id) {
-      button.classList.add("active");
-    }
-    const documentScope = isDocumentScopeThread(thread);
-    button.textContent = documentScope
-      ? `全文 · ${createHistoryTitle(thread.title || "全文提问")}`
-      : createHistoryTitle(highlight?.text || thread.title || "未命名问答");
-    button.title = documentScope ? "针对全文的提问（没有划线）" : highlight?.text || "";
-    button.addEventListener("click", () => activateThread(thread.id));
-    const showThreadMenu = (event) =>
-      showDocumentContextMenu(event, {
-        type: "thread",
-        id: thread.id,
-        highlightId: thread.highlightId,
-        trashed: false
-      });
-    button.addEventListener("contextmenu", showThreadMenu);
-
-    const deleteButton = document.createElement("button");
-    deleteButton.type = "button";
-    deleteButton.className = "thread-delete-button";
-    deleteButton.title = "删除这条历史划线";
-    deleteButton.setAttribute("aria-label", "删除这条历史划线");
-    deleteButton.textContent = "×";
-    deleteButton.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      await deleteReadingThread(thread.id);
-    });
-    deleteButton.addEventListener("contextmenu", showThreadMenu);
-
-    row.append(button, deleteButton);
-    elements.threadList.append(row);
-  }
-}
-
 /*
  * 划线不再占侧边栏顶部，而是变成输入框上方的小气泡；
  * 鼠标悬停（或键盘聚焦）时才展开看划线原文。
@@ -5344,32 +5256,18 @@ function renderSelection() {
   }
 
   host.replaceChildren();
-  const draftText = state.selectedText || "";
-  const activeText = state.activeHighlight?.text || "";
-  const text = draftText || activeText;
+  /*
+   * 这个气泡只代表「下一问要带上的划线」，不代表已经发生过的轮次 ——
+   * 已发生的轮次各自把划线原文显示在自己那一轮里。
+   * 因此它永远可以取消：没有「已保存所以不能删」这种状态。
+   */
+  const text = state.selectedText || "";
   if (!text) {
-    // 全文提问：没有划线，但要让用户看出这一问的范围是整篇
-    if (state.activeThread && isDocumentScopeThread(state.activeThread)) {
-      const wrap = document.createElement("div");
-      wrap.className = "selection-chip-wrap selection-chip-static";
-      const label = document.createElement("span");
-      label.className = "selection-chip";
-      label.textContent = "❖ 全文提问 · 未划线";
-      label.title = "这条问答针对整篇文档；想锚定某段就先在正文划线";
-      wrap.append(label);
-      host.append(wrap);
-      host.hidden = false;
-    } else {
-      host.hidden = true;
-    }
+    host.hidden = true;
     updateSendState();
     return;
   }
 
-  const isDraft = Boolean(draftText) || isDraftHighlight(state.activeHighlight);
-  // 正在看一条已保存的对话时又划了新线：这条划线属于「下一问」，不属于眼前这段对话
-  const pendingOverExisting =
-    Boolean(draftText) && Boolean(state.activeThread) && !isDraftThread(state.activeThread);
   const wrap = document.createElement("div");
   wrap.className = "selection-chip-wrap";
 
@@ -5381,19 +5279,9 @@ function renderSelection() {
   icon.textContent = "❝";
   icon.setAttribute("aria-hidden", "true");
   const label = document.createElement("span");
-  label.textContent = pendingOverExisting
-    ? `新划线 · ${text.length} 字 · 发送后另开一条`
-    : `1 条划线 · ${text.length} 字${isDraft ? " · 未保存" : ""}`;
+  label.textContent = `这一问带上这段划线 · ${text.length} 字`;
   chip.append(icon, label);
-  chip.title = pendingOverExisting
-    ? "这段划线会开一条新的问答，不会接在当前对话后面"
-    : "点击定位到正文划线处";
-  chip.addEventListener("click", () => {
-    const highlightId = state.activeHighlight?.id;
-    if (highlightId) {
-      scrollHighlightIntoCenter(highlightId);
-    }
-  });
+  chip.title = "鼠标悬停看划线原文；点 × 取消，不带划线也能提问";
 
   const pop = document.createElement("div");
   pop.className = "selection-chip-pop";
@@ -5408,24 +5296,21 @@ function renderSelection() {
 
   wrap.append(chip, pop);
 
-  if (isDraft) {
-    const close = document.createElement("button");
-    close.type = "button";
-    close.className = "selection-chip-close";
-    close.textContent = "×";
-    close.title = "取消这条划线";
-    close.setAttribute("aria-label", "取消这条划线");
-    close.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      // 当前对话是已保存的那种时，discardUnsubmittedDraft 不会重渲染，这里补上
-      await discardUnsubmittedDraft({ clearSelection: true, render: true });
-      window.getSelection()?.removeAllRanges();
-      hideSelectionAskButton();
-      renderSelection();
-      setStatus("已取消这条划线。");
-    });
-    wrap.append(close);
-  }
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "selection-chip-close";
+  close.textContent = "×";
+  close.title = "不带这条划线";
+  close.setAttribute("aria-label", "取消这条划线");
+  close.addEventListener("click", (event) => {
+    event.stopPropagation();
+    clearDraftSelection();
+    window.getSelection()?.removeAllRanges();
+    hideSelectionAskButton();
+    renderSelection();
+    setStatus("已取消这条划线；这一问将针对全文。");
+  });
+  wrap.append(close);
 
   host.append(wrap);
   host.hidden = false;
@@ -5654,21 +5539,6 @@ function zoomPathCanvas(nextScale, originX, originY) {
   applyPathCanvasTransform();
 }
 
-function renderPanelView() {
-  const isDetail = state.panelView === "detail";
-  elements.historyLayer.toggleAttribute("hidden", isDetail);
-  elements.detailLayer.toggleAttribute("hidden", !isDetail);
-  elements.historyLayer.setAttribute("aria-hidden", String(isDetail));
-  elements.detailLayer.setAttribute("aria-hidden", String(!isDetail));
-  elements.qaPanelTitle.textContent = isDetail ? "划线问答" : "历史划线";
-  elements.panelToggleButton.textContent = isDetail ? "◀" : "▶";
-  elements.panelToggleButton.title = isDetail ? "查看历史划线" : "返回当前提问";
-  if (isDetail) {
-    hideSelectionAskButton();
-    elements.questionInput.focus();
-  }
-}
-
 function getMessageListBottomDistance() {
   const list = elements.messageList;
   return Math.max(0, list.scrollHeight - list.scrollTop - list.clientHeight);
@@ -5745,6 +5615,30 @@ function buildRounds(messages) {
   return { rounds, byId, roots: rounds.filter((round) => !round.parentId) };
 }
 
+/* 这个文档下所有 thread 的消息，按时间合成一条对话 */
+async function getDocumentMessages() {
+  const threadIds = state.threads.filter((thread) => !isDraftThread(thread)).map((thread) => thread.id);
+  if (state.activeThread && !threadIds.includes(state.activeThread.id)) {
+    threadIds.push(state.activeThread.id);
+  }
+  const byThread = await getMessagesByThreadIds(threadIds);
+  return Object.values(byThread)
+    .flat()
+    .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+}
+
+/* 某一轮挂着的划线：新数据存在 message 上，旧数据来自它所属 thread */
+function getRoundHighlight(round) {
+  const highlightId =
+    round?.user?.highlightId ||
+    state.threads.find((thread) => thread.id === round?.user?.threadId)?.highlightId ||
+    "";
+  if (!highlightId) {
+    return null;
+  }
+  return state.highlights.find((highlight) => highlight.id === highlightId) || null;
+}
+
 function roundPath(tree, roundId) {
   const path = [];
   let cursor = tree?.byId?.get(roundId) || null;
@@ -5810,7 +5704,13 @@ async function renderMessages(options = {}) {
 
   const settings = await getSettings();
   const fallbackModelLabel = settings.ai?.model || "当前模型";
-  const messages = await getThreadMessages(state.activeThread.id);
+  /*
+   * 一个文档只呈现一条对话：把这个文档下所有 thread 的消息合起来按时间成链。
+   * 划线不再「拥有」一条独立问答，它只是某一轮问题上挂的原文。
+   * 存储层仍然是 thread（知识图谱那边照旧），但视图里永远是全部轮次 ——
+   * 于是「切换时对话记录消失」这件事从根上不可能再发生。
+   */
+  const messages = await getDocumentMessages();
   const tree = buildRounds(messages);
   state.roundTree = tree;
   state.activeRoundId = resolveActiveRoundId(tree);
@@ -5855,6 +5755,18 @@ function buildRoundElement(round, index, path, fallbackModelLabel, isLast) {
 
   const main = document.createElement("div");
   main.className = "round-main";
+
+  // 这一轮带的划线原文就显示在这一轮里，点它跳到正文对应位置
+  const highlight = getRoundHighlight(round);
+  if (highlight?.text) {
+    const quote = document.createElement("button");
+    quote.type = "button";
+    quote.className = "round-quote";
+    quote.textContent = highlight.text;
+    quote.title = "点击定位到正文划线处";
+    quote.addEventListener("click", () => scrollHighlightIntoCenter(highlight.id));
+    main.append(quote);
+  }
 
   const question = document.createElement("div");
   question.className = "round-question";
@@ -6385,7 +6297,6 @@ async function captureSelection() {
   state.selectedGlobalEndOffset = lastRange.globalEndOffset;
 
   renderSelection();
-  renderThreads();
   updateSendState();
   showSelectionAskButton(selection);
 }
@@ -6478,13 +6389,10 @@ async function persistThreadFromSelection(options = {}) {
   state.activeHighlight = highlight;
   state.activeThread = thread;
   clearDraftSelection();
-  state.panelView = "detail";
   hideSelectionAskButton();
 
   refreshDocumentHighlights();
-  renderThreads();
   renderSelection();
-  renderPanelView();
   await renderMessages();
   scrollHighlightIntoCenter(highlight.id);
   if (options.focusInput !== false) {
@@ -6517,12 +6425,9 @@ async function createDocumentThread() {
   state.activeThread = thread;
   state.activeRoundId = "";
   clearDraftSelection();
-  state.panelView = "detail";
   hideSelectionAskButton();
 
-  renderThreads();
   renderSelection();
-  renderPanelView();
   await renderMessages();
   return thread;
 }
@@ -6607,42 +6512,36 @@ async function discardUnsubmittedDraft(options = {}) {
 
   if (render) {
     refreshDocumentHighlights();
-    renderThreads();
     renderSelection();
-    renderPanelView();
     await renderMessages();
   }
   return true;
 }
 
-async function activateThread(threadId) {
-  await discardUnsubmittedDraft({ clearSelection: true, render: false });
-  const thread = state.threads.find((item) => item.id === threadId) || (await dbGet("threads", threadId));
-  if (!thread) {
+/*
+ * 一个文档只有一条对话，所以「激活某条 thread」这个动作不再存在。
+ * 点正文里的划线，只是把对话滚到带着这条划线的那一轮上；对话内容不变，
+ * 下一问该归谁也不受影响。
+ */
+async function focusRoundForThread(threadId) {
+  if (!threadId) {
     return;
   }
-
-  state.activeThread = thread;
-  state.activeRoundId = "";
-  state.activeHighlight =
-    state.highlights.find((highlight) => highlight.id === thread.highlightId) ||
-    state.highlights.find((highlight) => highlight.threadId === thread.id) ||
-    (thread.highlightId ? await dbGet("highlights", thread.highlightId) : null);
-  clearDraftSelection();
-  state.panelView = "detail";
-  hideSelectionAskButton();
-
-  renderSelection();
-  renderPanelView();
-  renderThreads();
-  await renderMessages();
-  scrollHighlightIntoCenter(state.activeHighlight?.id);
+  const tree = state.roundTree;
+  const target = tree?.rounds?.find((round) => round.user?.threadId === threadId);
+  if (!target) {
+    setStatus("这条划线对应的问答不在当前文档的对话里。");
+    return;
+  }
+  setActiveRound(target.id);
+  const article = elements.messageList.querySelector(`[data-round-id="${target.id}"]`);
+  article?.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
 async function handleDocumentClick(event) {
   const mark = event.target.closest?.(".reader-highlight");
   if (mark?.dataset.threadId) {
-    await activateThread(mark.dataset.threadId);
+    await focusRoundForThread(mark.dataset.threadId);
   }
 }
 
@@ -6687,8 +6586,14 @@ async function handleMessageListClick(event) {
     setStatus("当前回答仍在生成，请先停止后再重试或编辑。");
     return;
   }
+  // 重试/编辑要把新回答写回这一轮原本所属的 thread，所以先把它设为当前目标
   if (state.activeThread?.id !== threadId) {
-    await activateThread(threadId);
+    const owner =
+      state.threads.find((item) => item.id === threadId) || (await dbGet("threads", threadId));
+    if (owner) {
+      state.activeThread = owner;
+    }
+    await focusRoundForThread(threadId);
   }
 
   const userMessage = await dbGet("messages", userMessageId);
@@ -6729,14 +6634,22 @@ async function sendQuestion(options = {}) {
    */
   if (state.selectedText) {
     await createThreadFromSelection({ focusInput: false });
-  } else if (!state.activeThread) {
-    await createDocumentThread();
+  } else {
+    // 没带划线的问题一律接在这个文档的对话上，不要散落到某条划线的 thread 里
+    const conversation = state.threads.find(
+      (thread) => isDocumentScopeThread(thread) && !isDraftThread(thread)
+    );
+    if (conversation) {
+      state.activeThread = conversation;
+      state.activeHighlight = null;
+    } else if (!state.activeThread || !isDocumentScopeThread(state.activeThread)) {
+      await createDocumentThread();
+    }
   }
 
   if (isDraftThread(state.activeThread)) {
     await commitDraftThread({ question });
     refreshDocumentHighlights();
-    renderThreads();
   }
 
   if (!state.activeThread) {
@@ -6748,7 +6661,8 @@ async function sendQuestion(options = {}) {
   const aiSettingsAtQuestion = { ...(settingsAtQuestion.ai || {}) };
   const modelAtQuestion = aiSettingsAtQuestion.model || "当前模型";
   // 以发送这一刻的当前轮作为父轮：当前轮已经有后续时，这里就自然分出一条支线
-  const treeBeforeQuestion = buildRounds(await getThreadMessages(state.activeThread.id));
+  // 父轮要在整条对话里算，否则分支会挂错
+  const treeBeforeQuestion = buildRounds(await getDocumentMessages());
   const parentRoundId = resolveActiveRoundId(treeBeforeQuestion);
   const userMessage = await persistUserQuestionMessage({
     question,
@@ -6977,7 +6891,6 @@ async function saveSuccessfulAnswer(answerRun, content) {
   elements.questionInput.value = "";
   notifyKnowledgeDataChanged("answer-created");
 
-  renderThreads();
   await renderMessages({ preserveViewerScroll: true });
   setStatus("回答已生成。");
 }
@@ -7256,44 +7169,7 @@ async function handleShortcut(event) {
   }
 }
 
-async function handlePanelToggle() {
-  if (state.panelView === "detail") {
-    await discardUnsubmittedDraft({ clearSelection: true, render: true });
-    hideSelectionAskButton();
-    setPanelView("history");
-    return;
-  }
-
-  /*
-   * 这个按钮在历史视图下写着「返回当前提问」，以前却把当前对话清空了 ——
-   * 从历史列表切回来对话就空一次。返回就只是返回；要开新对话走 startNewThread。
-   */
-  await discardUnsubmittedDraft({ clearSelection: true, render: false });
-  hideSelectionAskButton();
-  setPanelView("detail");
-  renderSelection();
-  void renderMessages();
-}
-
 /* 显式开一条新对话：原来这件事是靠「返回详情时清空」顺带做的 */
-async function startNewThread() {
-  await discardUnsubmittedDraft({ clearSelection: true, render: false });
-  state.activeThread = null;
-  state.activeHighlight = null;
-  state.activeRoundId = "";
-  state.roundTree = null;
-  clearDraftSelection();
-  elements.questionInput.value = "";
-  state.editingQuestion = null;
-  hideSelectionAskButton();
-  setPanelView("detail");
-  renderSelection();
-  renderThreads();
-  await renderMessages();
-  elements.questionInput.focus();
-  setStatus("已开始一条新对话；直接提问针对全文，先划线则针对那段原文。");
-}
-
 /*
  * 划线之后点「进入侧边提问」，以前会立刻建一条草稿 thread 并重渲染消息区，
  * 于是正在看的对话被一条空草稿顶掉 —— 用户看到的就是「一划线对话就没了」。
@@ -7305,7 +7181,6 @@ async function openDraftQuestion() {
     return;
   }
   hideSelectionAskButton();
-  setPanelView("detail");
   renderSelection();
   elements.questionInput.focus();
   pulseSelectionChip();
@@ -7321,11 +7196,6 @@ async function openKnowledgePage() {
   await openOrFocusExtensionPage(
     `src/knowledge/knowledge.html?documentId=${encodeURIComponent(state.currentDocument.id)}`
   );
-}
-
-function setPanelView(view) {
-  state.panelView = view === "detail" ? "detail" : "history";
-  renderPanelView();
 }
 
 function setSidebarTab(tab) {
