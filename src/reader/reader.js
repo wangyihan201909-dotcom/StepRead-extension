@@ -7294,13 +7294,22 @@ async function startNewThread() {
   setStatus("已开始一条新对话；直接提问针对全文，先划线则针对那段原文。");
 }
 
+/*
+ * 划线之后点「进入侧边提问」，以前会立刻建一条草稿 thread 并重渲染消息区，
+ * 于是正在看的对话被一条空草稿顶掉 —— 用户看到的就是「一划线对话就没了」。
+ * 现在这一步只把光标送进输入框；这条划线归谁在 sendQuestion 里决定。
+ */
 async function openDraftQuestion() {
   if (!state.selectedText) {
     setStatus("请先在正文中选中一段文字。");
     return;
   }
-  await createThreadFromSelection({ focusInput: true });
+  hideSelectionAskButton();
+  setPanelView("detail");
+  renderSelection();
+  elements.questionInput.focus();
   pulseSelectionChip();
+  setStatus("已带上这段划线；发送后会另开一条划线问答，当前对话不受影响。");
 }
 
 async function openKnowledgePage() {
