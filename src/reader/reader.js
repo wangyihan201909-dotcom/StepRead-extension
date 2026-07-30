@@ -129,6 +129,7 @@ const elements = {
   detailLayer: document.querySelector("#detailLayer"),
   panelToggleButton: document.querySelector("#panelToggleButton"),
   knowledgeButton: document.querySelector("#knowledgeButton"),
+  newThreadButton: document.querySelector("#newThreadButton"),
   selectionAskButton: document.querySelector("#selectionAskButton"),
   documentsTab: document.querySelector("#documentsTab"),
   tocTab: document.querySelector("#tocTab"),
@@ -393,6 +394,7 @@ function bindEvents() {
   elements.documentsTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.tocTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.knowledgeButton.addEventListener("click", openKnowledgePage);
+  elements.newThreadButton.addEventListener("click", startNewThread);
   elements.sendQuestionButton.addEventListener("click", handleQuestionButtonClick);
   elements.messageList.addEventListener("click", handleMessageListClick);
   elements.pathCanvasButton.addEventListener("click", openPathCanvas);
@@ -7199,13 +7201,34 @@ async function handlePanelToggle() {
     return;
   }
 
+  /*
+   * 这个按钮在历史视图下写着「返回当前提问」，以前却把当前对话清空了 ——
+   * 从历史列表切回来对话就空一次。返回就只是返回；要开新对话走 startNewThread。
+   */
   await discardUnsubmittedDraft({ clearSelection: true, render: false });
-  state.activeThread = null;
-  state.activeHighlight = null;
   hideSelectionAskButton();
   setPanelView("detail");
   renderSelection();
   void renderMessages();
+}
+
+/* 显式开一条新对话：原来这件事是靠「返回详情时清空」顺带做的 */
+async function startNewThread() {
+  await discardUnsubmittedDraft({ clearSelection: true, render: false });
+  state.activeThread = null;
+  state.activeHighlight = null;
+  state.activeRoundId = "";
+  state.roundTree = null;
+  clearDraftSelection();
+  elements.questionInput.value = "";
+  state.editingQuestion = null;
+  hideSelectionAskButton();
+  setPanelView("detail");
+  renderSelection();
+  renderThreads();
+  await renderMessages();
+  elements.questionInput.focus();
+  setStatus("已开始一条新对话；直接提问针对全文，先划线则针对那段原文。");
 }
 
 async function openDraftQuestion() {
