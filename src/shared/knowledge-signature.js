@@ -5,6 +5,7 @@ export function createKnowledgeReportSignaturePayload({
   messagesByThread = {},
   summaries = [],
   userPrompt = "",
+  graph = null,
   settings = {}
 } = {}) {
   return {
@@ -14,6 +15,7 @@ export function createKnowledgeReportSignaturePayload({
     context: settings?.ai?.context || {},
     model: settings?.ai?.model || "",
     demoMode: Boolean(settings?.ai?.demoMode),
+    graph: graph || null,
     highlights: (highlights || []).map((highlight) => ({
       id: highlight.id,
       blockId: highlight.blockId,

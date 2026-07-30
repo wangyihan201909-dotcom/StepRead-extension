@@ -47,11 +47,22 @@ export const DEFAULT_SETTINGS = {
     preferredFontSize: 17,
     theme: "light",
     documentFolders: []
+  },
+  knowledgeGraph: {
+    autoLinkMode: "sequence",
+    cardBody: "summary",
+    cardBodyLimit: 160,
+    chatContextScope: "summary-and-all",
+    layout: {
+      repulsion: 26000,
+      linkDistance: 240,
+      centerGravity: 0.035
+    }
   }
 };
 
 export const DB_NAME = "edge-mv3-reader-db";
-export const DB_VERSION = 4;
+export const DB_VERSION = 5;
 
 export function nowIso() {
   return new Date().toISOString();

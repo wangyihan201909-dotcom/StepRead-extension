@@ -2,12 +2,16 @@ import { createId, nowIso } from "./defaults.js";
 import { getSettings } from "./store.js";
 import { logAiRun } from "./logger.js";
 import {
+  buildGraphChatContext,
   buildKnowledgeContext as buildKnowledgeContextPackage,
   buildThreadContext
 } from "./ai-context-builder.js";
 
 const KNOWLEDGE_SYSTEM_PROMPT =
   "你是一个严谨的知识图谱整理助手。请根据用户已经划线的原文、每条划线对应的问答记录、相邻上下文、可选的正文原文范围以及知识图谱页面里的本次 prompt，生成文字版知识图谱。请区分：概念节点、节点之间的关系、支持该关系的原文证据、仍缺证据或不稳定的判断、下一步应继续追问的方向。不要把没有证据支持的推断写成结论。输出必须面向读者，不要暴露内部字段、block/highlight/thread/message id、JSON 路径或上下文包结构；引用证据时用自然语言短句，例如“划线原文提到...”或“此前问答指出...”。不要展示隐藏推理过程。";
+
+const GRAPH_CHAT_SYSTEM_PROMPT =
+  "你是 StepRead 知识图谱里的对话助手。读者已经把自己的提问整理成一张图谱：每个切片是一次提问和回答，切片之间的连线是读者认可的关联。请只依据这张图谱的摘要、切片内容和关联回答问题；读者手动标注的关联优先于自动生成的顺序关联。图谱里没有的内容就说没有，不要编造阅读记录。输出面向读者，不要暴露切片编号、内部字段、id 或上下文包结构，也不要展示推理过程。";
 
 const DEFAULT_SELECTION_SYSTEM_PROMPT =
   "你是 StepRead 的划线阅读助手。请优先依据读者选中的原文和可用上下文，直接回答读者的问题。";
@@ -147,6 +151,7 @@ export async function generateKnowledgeReport({
   messagesByThread,
   summaries = [],
   userPrompt,
+  graph = null,
   aiSettings: providedAiSettings,
   signal,
   timeoutMs,
@@ -163,6 +168,7 @@ export async function generateKnowledgeReport({
     messagesByThread,
     summaries,
     userPrompt,
+    graph,
     options: resolveKnowledgeContextOptions(aiSettings)
   });
   const apiMessages = [
@@ -226,6 +232,82 @@ export async function generateKnowledgeReport({
     stream: typeof onDelta === "function",
     onDelta,
     emptyError: "模型返回了空知识图谱。"
+  });
+}
+
+export async function askGraphChat({
+  documentRecord,
+  report = "",
+  nodes = [],
+  edges = [],
+  focusNodeIds = [],
+  history = [],
+  question,
+  scope,
+  aiSettings: providedAiSettings,
+  signal,
+  timeoutMs,
+  onDelta
+} = {}) {
+  const settings = providedAiSettings ? null : await getSettings();
+  const aiSettings = providedAiSettings || settings?.ai || {};
+  const startedAt = nowIso();
+  const context = buildGraphChatContext({
+    documentRecord,
+    report,
+    nodes,
+    edges,
+    focusNodeIds,
+    history,
+    question,
+    scope: scope || settings?.knowledgeGraph?.chatContextScope || "summary-and-all"
+  });
+  const apiMessages = [
+    { role: "system", content: GRAPH_CHAT_SYSTEM_PROMPT },
+    { role: "user", content: context }
+  ];
+  const runBase = {
+    id: createId("airun"),
+    threadId: "",
+    highlightId: "",
+    model: aiSettings.model || "",
+    request: {
+      baseUrl: aiSettings.baseUrl || "",
+      model: aiSettings.model || "",
+      messages: apiMessages.map((message) => ({ role: message.role, content: message.content }))
+    },
+    startedAt
+  };
+
+  if (aiSettings.demoMode || !aiSettings.apiKey) {
+    const responseText = createDemoGraphChatAnswer({ question, nodes, focusNodeIds });
+    await logAiRun({
+      ...runBase,
+      provider: "local-demo",
+      response: { content: responseText },
+      status: "success",
+      completedAt: nowIso()
+    });
+    onDelta?.(responseText);
+    return createAiResult({
+      ok: true,
+      content: responseText,
+      demo: true,
+      model: aiSettings.model || "",
+      runId: runBase.id
+    });
+  }
+
+  return runLoggedChatCompletion({
+    aiSettings,
+    apiMessages,
+    temperature: 0.3,
+    runBase,
+    signal,
+    timeoutMs,
+    stream: typeof onDelta === "function",
+    onDelta,
+    emptyError: "模型对这张知识图谱返回了空回答。"
   });
 }
 
@@ -1188,6 +1270,23 @@ function createDemoAnswer(selection, question, chapterTitle) {
     "",
     "配置 API Key 并关闭演示模式后，会调用真实模型生成回答。"
   ].filter(Boolean).join("\n");
+}
+
+function createDemoGraphChatAnswer({ question, nodes = [], focusNodeIds = [] }) {
+  const focused = nodes.filter((node) => focusNodeIds.includes(node.id));
+  const referenced = (focused.length ? focused : nodes).slice(0, 3);
+  return [
+    "演示模式回答：",
+    `问题：${String(question || "").trim()}`,
+    "",
+    referenced.length
+      ? `这张图谱里最相关的切片是：${referenced.map((node) => node.title || "未命名切片").join("；")}。`
+      : "这张图谱里还没有切片，先去阅读器里划线提问吧。",
+    "",
+    "配置 API Key 并关闭演示模式后，会调用真实模型基于整张图谱回答。"
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function buildQaSummaryPrompt({ documentRecord, highlight, userMessage, assistantMessage }) {

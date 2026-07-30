@@ -204,6 +204,7 @@ export function buildKnowledgeContext({
   messagesByThread = {},
   summaries = [],
   userPrompt = "",
+  graph = null,
   options = {}
 } = {}) {
   const contextOptions = resolveContextOptions(options, DEFAULT_KNOWLEDGE_CONTEXT_OPTIONS);
@@ -263,6 +264,9 @@ export function buildKnowledgeContext({
       role: "optional_pre_highlight_text"
     });
   }
+  text = appendOptionalSection(text, "knowledge.graph_structure", formatGraphStructure(graph), {
+    role: "user_curated_structure"
+  });
   text = appendSection(text, "knowledge.output_contract", getKnowledgeOutputContract(), {
     role: "output_contract"
   });
@@ -294,6 +298,64 @@ export function buildKnowledgeContext({
   }
 
   return wrapContextPackage("knowledge_graph", text);
+}
+
+/**
+ * Context for the chat window that lives inside a knowledge graph. The graph
+ * summary and the user-curated slices/relations are the primary evidence here;
+ * the reading records are only reachable through the slices.
+ */
+export function buildGraphChatContext({
+  documentRecord,
+  report = "",
+  nodes = [],
+  edges = [],
+  focusNodeIds = [],
+  history = [],
+  question = "",
+  scope = "summary-and-all"
+} = {}) {
+  const focusIds = new Set(focusNodeIds.filter(Boolean));
+  const labels = createGraphNodeLabels(nodes);
+  const header = [
+    "Answer a question about the reader's own knowledge graph.",
+    "",
+    `schema: ${CONTEXT_SCHEMA_VERSION}`,
+    "mode: knowledge_graph_chat",
+    `document.title: ${getDocumentTitle(documentRecord)}`,
+    `graph.counts: slices=${nodes.length}; relations=${edges.length}; focused=${focusIds.size}`,
+    `graph.context_scope: ${scope}`
+  ].join("\n");
+
+  let text = appendSection("", "graph_chat.metadata", header, { role: "package_metadata" });
+  text = appendSection(text, "graph_chat.organization", getGraphChatOrganization(), { role: "source_map" });
+  text = appendOptionalSection(text, "graph.summary", report, { role: "graph_summary" });
+  text = appendOptionalSection(
+    text,
+    "graph.slices",
+    formatGraphSlices(nodes, labels, { focusIds, scope }),
+    { role: "graph_slices" }
+  );
+  text = appendOptionalSection(text, "graph.relations", formatGraphRelations(edges, labels), {
+    role: "graph_relations"
+  });
+  text = appendOptionalSection(
+    text,
+    "graph.focused_slices",
+    formatFocusedSlices(nodes, labels, focusIds),
+    { role: "primary_evidence" }
+  );
+  text = appendOptionalSection(text, "graph_chat.history", formatGraphChatHistory(history), {
+    role: "conversation_history"
+  });
+  text = appendSection(text, "graph_chat.output_contract", getGraphChatOutputContract(), {
+    role: "output_contract"
+  });
+  text = appendSection(text, "graph_chat.question", normalizeContextText(question) || "None", {
+    role: "user_question"
+  });
+
+  return wrapContextPackage("knowledge_graph_chat", text);
 }
 
 export function buildHighlightContextParts({
@@ -1308,6 +1370,132 @@ function getKnowledgeContextOrganization() {
     "synthesis_rule: create concepts from repeated or central evidence, then connect concepts with definition, cause, contrast, prerequisite, example, or limitation relations.",
     "traceability_rule: attach important claims to highlight/thread/message/block ids when possible.",
     "gap_rule: separate stable conclusions from open questions and weakly supported interpretations."
+  ].join("\n");
+}
+
+function createGraphNodeLabels(nodes) {
+  return new Map(nodes.map((node, index) => [node.id, `S${index + 1}`]));
+}
+
+function formatGraphStructure(graph) {
+  const nodes = graph?.nodes || [];
+  const edges = graph?.edges || [];
+  if (!nodes.length) {
+    return "";
+  }
+
+  const labels = createGraphNodeLabels(nodes);
+  return [
+    "The reader arranged these slices and relations by hand in the graph canvas.",
+    "user_relation_rule: relations marked origin=user or confirmed=true are the reader's own judgement. Follow them even when the raw records suggest a different grouping.",
+    "auto_relation_rule: relations marked origin=auto-* are only the order the questions were asked. Treat them as weak hints.",
+    "",
+    "slices:",
+    ...nodes.map((node) =>
+      [
+        `${labels.get(node.id)} [${node.kind}]`,
+        clipText(normalizeContextText(node.title), 80),
+        node.quote ? `quote: ${clipText(normalizeContextText(node.quote), 160)}` : "",
+        node.summary ? `summary: ${clipText(normalizeContextText(node.summary), 220)}` : "",
+        node.body ? `note: ${clipText(normalizeContextText(node.body), 220)}` : "",
+        node.orphan ? "status: source record deleted" : ""
+      ]
+        .filter(Boolean)
+        .join(" | ")
+    ),
+    "",
+    "relations:",
+    ...formatGraphRelationLines(edges, labels)
+  ].join("\n");
+}
+
+function formatGraphRelations(edges, labels) {
+  const lines = formatGraphRelationLines(edges, labels);
+  return lines.length ? lines.join("\n") : "";
+}
+
+function formatGraphRelationLines(edges, labels) {
+  return edges
+    .filter((edge) => labels.has(edge.fromNodeId) && labels.has(edge.toNodeId))
+    .map((edge) =>
+      [
+        `${labels.get(edge.fromNodeId)} -> ${labels.get(edge.toNodeId)}`,
+        `origin=${edge.origin}`,
+        edge.relation ? `relation=${clipText(normalizeContextText(edge.relation), 60)}` : "",
+        edge.confirmed || edge.origin === "user" ? "authored_by=reader" : "authored_by=auto"
+      ]
+        .filter(Boolean)
+        .join(" | ")
+    );
+}
+
+function formatGraphSlices(nodes, labels, { focusIds, scope }) {
+  const answerLimit = scope === "all-full-text" ? 2400 : 600;
+  return nodes
+    .filter((node) => scope !== "summary-and-focused" || !focusIds.size || focusIds.has(node.id))
+    .map((node) =>
+      [
+        `${labels.get(node.id)} [${node.kind}]${focusIds.has(node.id) ? " (focused)" : ""}`,
+        node.question ? `question: ${clipText(normalizeContextText(node.question), 400)}` : "",
+        node.quote ? `quote: ${clipText(normalizeContextText(node.quote), 400)}` : "",
+        node.summary ? `summary: ${clipText(normalizeContextText(node.summary), 400)}` : "",
+        node.body ? `note: ${clipText(normalizeContextText(node.body), 600)}` : "",
+        node.answer ? `answer: ${clipText(normalizeContextText(node.answer), answerLimit)}` : ""
+      ]
+        .filter(Boolean)
+        .join("\n")
+    )
+    .join("\n\n");
+}
+
+function formatFocusedSlices(nodes, labels, focusIds) {
+  if (!focusIds.size) {
+    return "";
+  }
+  return nodes
+    .filter((node) => focusIds.has(node.id))
+    .map((node) =>
+      [
+        `${labels.get(node.id)} ${clipText(normalizeContextText(node.title), 80)}`,
+        node.quote ? `quote: ${normalizeContextText(node.quote)}` : "",
+        node.question ? `question: ${normalizeContextText(node.question)}` : "",
+        node.answer ? `answer: ${clipText(normalizeContextText(node.answer), 2400)}` : "",
+        node.body ? `note: ${normalizeContextText(node.body)}` : ""
+      ]
+        .filter(Boolean)
+        .join("\n")
+    )
+    .join("\n\n");
+}
+
+function formatGraphChatHistory(history) {
+  return history
+    .filter((message) => message?.content)
+    .slice(-12)
+    .map((message) => `${message.role === "assistant" ? "assistant" : "user"}: ${clipText(normalizeContextText(message.content), 900)}`)
+    .join("\n\n");
+}
+
+function getGraphChatOrganization() {
+  return [
+    "source_order:",
+    "1. graph.focused_slices = slices the reader explicitly pointed at for this question. Answer them first when present.",
+    "2. graph.summary = the generated summary of this graph. Use it for the overall picture.",
+    "3. graph.slices = every slice in the graph, each one a question the reader asked while reading plus its answer.",
+    "4. graph.relations = how the slices connect. Reader-authored relations outrank auto ones.",
+    "5. graph_chat.history = this chat window's earlier turns.",
+    "availability_rule: if the graph has no slice covering the question, say so instead of inventing reading records."
+  ].join("\n");
+}
+
+function getGraphChatOutputContract() {
+  return [
+    "Answer in Chinese.",
+    "Answer the reader's question directly, grounded in the slices of this graph.",
+    "Refer to slices in natural language (例如“你在第 3 个切片问过...”). Never print slice labels such as S1, internal ids, field names, or the context package structure.",
+    "Do not show hidden reasoning, analysis steps, or status text.",
+    "If the graph does not contain enough to answer, say 这张图谱里的记录不足以回答 and name what is missing in one short sentence.",
+    "Keep the answer compact: short paragraphs or a short list, no filler restating the question."
   ].join("\n");
 }
 
