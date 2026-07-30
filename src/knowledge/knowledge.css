@@ -476,6 +476,35 @@ h3 {
   cursor: pointer;
 }
 
+/* 未放置的证据可以拖到画布上；已放置的只能点击定位 */
+.evidence-item[draggable="true"] {
+  cursor: grab;
+}
+
+.evidence-item[draggable="true"]:hover {
+  border-left-color: var(--selection-marker, var(--accent));
+}
+
+.evidence-item.dragging {
+  opacity: 0.5;
+}
+
+.evidence-item.placed {
+  border-left-style: dashed;
+  opacity: 0.78;
+}
+
+/* 拖着证据经过画布时给出落点提示 */
+.graph-viewport.drop-target,
+.graph-canvas .drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -6px;
+}
+
+.chat-greeting {
+  border-left: 3px solid var(--accent);
+}
+
 .evidence-item-title {
   font-weight: 750;
   line-height: 1.35;

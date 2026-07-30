@@ -235,6 +235,89 @@ export async function generateKnowledgeReport({
   });
 }
 
+/*
+ * 图谱问答的开场问候语：每次打开知识图谱时生成一句不超过 50 字的总览，
+ * 代替原来页面顶部那一大段摘要。不落库，每次打开都重新生成。
+ */
+export async function generateGraphGreeting({
+  documentRecord,
+  nodes = [],
+  edges = [],
+  aiSettings: providedAiSettings,
+  signal,
+  timeoutMs
+} = {}) {
+  const settings = providedAiSettings ? null : await getSettings();
+  const aiSettings = providedAiSettings || settings?.ai || {};
+  const startedAt = nowIso();
+  const placed = nodes.filter((node) => !node.hidden);
+  const titles = placed.slice(0, 12).map((node, index) => `${index + 1}. ${node.title || "未命名切片"}`);
+  const apiMessages = [
+    {
+      role: "system",
+      content:
+        "你是 StepRead 知识图谱里的对话助手。请用一句不超过 50 个字的中文，概括读者这张图谱目前的状态，并自然地引出下一步可以问什么。只输出这一句话，不要标题、不要列表、不要引号，不要提到切片编号或内部字段。"
+    },
+    {
+      role: "user",
+      content: [
+        `文档标题：${documentRecord?.title || "未命名文档"}`,
+        `已放置切片：${placed.length} 个；读者手动建立的关联：${edges.filter((edge) => !edge.hidden).length} 条`,
+        titles.length ? `切片主题：\n${titles.join("\n")}` : "读者还没有把任何问答放到图谱上。",
+        "请给出那一句不超过 50 字的问候。"
+      ].join("\n")
+    }
+  ];
+  const runBase = {
+    id: createId("airun"),
+    threadId: "",
+    highlightId: "",
+    model: aiSettings.model || "",
+    request: {
+      baseUrl: aiSettings.baseUrl || "",
+      model: aiSettings.model || "",
+      messages: apiMessages.map((message) => ({ role: message.role, content: message.content }))
+    },
+    startedAt
+  };
+
+  if (aiSettings.demoMode || !aiSettings.apiKey) {
+    const responseText = createDemoGraphGreeting(placed.length, edges.length);
+    await logAiRun({
+      ...runBase,
+      provider: "local-demo",
+      response: { content: responseText },
+      status: "success",
+      completedAt: nowIso()
+    });
+    return createAiResult({
+      ok: true,
+      content: responseText,
+      demo: true,
+      model: aiSettings.model || "",
+      runId: runBase.id
+    });
+  }
+
+  return runLoggedChatCompletion({
+    aiSettings,
+    apiMessages,
+    temperature: 0.4,
+    runBase,
+    signal,
+    timeoutMs,
+    stream: false,
+    emptyError: "模型没有返回问候语。"
+  });
+}
+
+function createDemoGraphGreeting(nodeCount, edgeCount) {
+  if (!nodeCount) {
+    return "图谱还是空的，先把想留下的问答拖进来吧。";
+  }
+  return `已经放了 ${nodeCount} 个切片、${edgeCount} 条关联，想先理清哪一块？`;
+}
+
 export async function askGraphChat({
   documentRecord,
   report = "",

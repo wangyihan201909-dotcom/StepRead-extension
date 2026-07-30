@@ -2205,6 +2205,32 @@ button.fork-badge:hover .fork-num { color: var(--panel-bg); }
   font-weight: 600;
 }
 
+/* 逐轮确认是否收进知识图谱 */
+.graph-accept-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.graph-accept-button {
+  border-style: dashed;
+}
+
+.graph-accept-row.accepted .graph-accept-button {
+  border-style: solid;
+  border-color: var(--selection-marker);
+  background: var(--selection-bg);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.graph-accept-hint {
+  color: var(--muted);
+  font-size: var(--app-xs-font-size);
+}
+
 /* 分叉轮次在卡片里给出可切换的支线胶囊，和 demo 一致 */
 .branch-chips {
   display: flex;

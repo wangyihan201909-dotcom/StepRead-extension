@@ -5893,12 +5893,75 @@ function buildRoundElement(round, index, path, fallbackModelLabel, isLast) {
   }
   main.append(tools);
 
+  // 答完的轮次才能收进知识图谱：收录的是「问题 + 回答」这一整轮
+  if (round.assistant) {
+    main.append(buildGraphAcceptRow(round));
+  }
+
   if (round.children.length > 1) {
     main.append(buildBranchChips(round, path));
   }
 
   article.append(main);
   return article;
+}
+
+/*
+ * 逐轮确认是否收进知识图谱。标记落在 assistant message 上，因为知识图谱那边
+ * 的 sourceKey 就是 assistant message id，两边天然对齐，不用另建一张表。
+ * 确认后这一轮只进「阅读证据」，摆到画布上仍然是手动的。
+ */
+function buildGraphAcceptRow(round) {
+  const accepted = Boolean(round.assistant?.graphAccepted);
+  const row = document.createElement("div");
+  row.className = "graph-accept-row";
+  if (accepted) {
+    row.classList.add("accepted");
+  }
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "secondary round-mini-button graph-accept-button";
+  button.textContent = accepted ? "✓ 已加入知识图谱" : "＋ 加入知识图谱";
+  button.title = accepted
+    ? "已收进阅读证据，可在知识图谱页拖到画布上；点这里可撤回"
+    : "把这一轮收进阅读证据，之后在知识图谱页手动拖到画布上";
+  button.addEventListener("click", () => toggleRoundInGraph(round));
+
+  const hint = document.createElement("span");
+  hint.className = "graph-accept-hint";
+  hint.textContent = accepted ? "已在阅读证据里，等你拖上画布" : "";
+
+  row.append(button, hint);
+  return row;
+}
+
+async function toggleRoundInGraph(round) {
+  const assistant = round.assistant;
+  if (!assistant?.id) {
+    setStatus("这一轮还没有回答，暂时不能加入知识图谱。");
+    return;
+  }
+
+  const nextAccepted = !assistant.graphAccepted;
+  const updated = {
+    ...assistant,
+    graphAccepted: nextAccepted,
+    graphAcceptedAt: nextAccepted ? nowIso() : ""
+  };
+  await dbPut("messages", updated);
+  await logTask(nextAccepted ? "graph.evidence.accepted" : "graph.evidence.withdrawn", {
+    documentId: state.currentDocument?.id || "",
+    threadId: assistant.threadId || "",
+    messageId: assistant.id
+  });
+  notifyKnowledgeDataChanged(nextAccepted ? "graph-evidence-accepted" : "graph-evidence-withdrawn");
+  await renderMessages({ preserveViewerScroll: true });
+  setStatus(
+    nextAccepted
+      ? "已收进阅读证据。到知识图谱页把它拖到画布上，并手动连线。"
+      : "已从阅读证据里撤回，画布上已放置的切片不受影响。"
+  );
 }
 
 function buildBranchChips(round, path) {

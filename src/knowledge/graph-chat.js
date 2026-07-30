@@ -15,7 +15,8 @@ export function createGraphChat({ elements, documentId, callbacks = {} }) {
     messages: [],
     focusNodeIds: [],
     activeRun: null,
-    streamContent: ""
+    streamContent: "",
+    greeting: ""
   };
 
   elements.chatForm.addEventListener("submit", handleSubmit);
@@ -66,6 +67,17 @@ export function createGraphChat({ elements, documentId, callbacks = {} }) {
 
   function renderMessages() {
     elements.chatMessages.replaceChildren();
+    // 开场问候语代替了原来页面顶部那段摘要，每次打开重新生成，不落库
+    if (state.greeting) {
+      const greeting = document.createElement("article");
+      greeting.className = "chat-message chat-message-assistant chat-greeting";
+      const content = document.createElement("div");
+      content.className = "message-content";
+      renderMessageContent(content, state.greeting);
+      greeting.append(content);
+      elements.chatMessages.append(greeting);
+    }
+
     if (!state.messages.length && !state.activeRun) {
       const empty = document.createElement("p");
       empty.className = "chat-empty";
@@ -339,12 +351,20 @@ export function createGraphChat({ elements, documentId, callbacks = {} }) {
     elements.chatStatus.textContent = message;
   }
 
+  function setGreeting(text) {
+    const next = String(text || "").replace(/\s+/g, " ").trim();
+    // 硬性截到 50 字：模型偶尔会超，界面上不能因此被撑开
+    state.greeting = next.length > 50 ? `${next.slice(0, 50)}…` : next;
+    renderMessages();
+  }
+
   return {
     load,
     render,
     renderFocusList,
     addFocusNode,
     pruneFocusNodes,
+    setGreeting,
     getFocusNodeIds: () => [...state.focusNodeIds]
   };
 }

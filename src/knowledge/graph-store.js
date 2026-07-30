@@ -2,6 +2,12 @@ import { createId, nowIso } from "../shared/defaults.js";
 import { dbDelete, dbGetAllByIndex, dbPut, dbPutMany } from "../shared/db.js";
 
 export const AUTO_EDGE_ORIGINS = new Set(["auto-sequence", "auto-thread"]);
+
+/*
+ * 切片和连线都由读者手动建立，所以自动连线默认关掉。
+ * 设置页仍然可以改回 sequence / thread-only，自动连线的代码没有删。
+ */
+export const DEFAULT_AUTO_LINK_MODE = "none";
 const UNDO_STACK_LIMIT = 20;
 
 export async function loadGraph(documentId) {
@@ -33,42 +39,34 @@ export async function reconcileGraph({
   blocks = [],
   settings = {}
 } = {}) {
-  const autoLinkMode = settings?.knowledgeGraph?.autoLinkMode || "sequence";
+  const autoLinkMode = settings?.knowledgeGraph?.autoLinkMode || DEFAULT_AUTO_LINK_MODE;
   const turns = collectQaTurns({ highlights, threads, messagesByThread, summaries, blocks });
   const nodesBySourceKey = new Map(
     nodes.filter((node) => node.kind === "qa" && node.sourceKey).map((node) => [node.sourceKey, node])
-  );
-  // A slice hand-converted from an orphaned Q&A turn must not reappear as a qa
-  // node, and converting must not duplicate its user-drawn edges onto a new node.
-  const convertedSourceKeys = new Set(
-    nodes.filter((node) => node.kind === "note" && node.sourceKey).map((node) => node.sourceKey)
   );
   const knownNodeIds = new Set(nodes.map((node) => node.id));
   const nextNodes = [...nodes];
   const changedNodes = [];
   const orderedQaNodes = [];
 
+  /*
+   * 切片不再自动生成。读者在阅读器里逐轮确认「加入知识图谱」，那一轮先进
+   * 阅读证据，再由读者手动拖到画布上才成为切片（placeQaTurnNode）。
+   * 这里只负责刷新已放置切片的内容，以及标记来源已消失的切片。
+   */
   for (const [index, turn] of turns.entries()) {
     const existing = nodesBySourceKey.get(turn.sourceKey);
-    if (existing) {
-      const merged = mergeQaNode(existing, turn, index);
-      if (merged !== existing) {
-        changedNodes.push(merged);
-        replaceInArray(nextNodes, merged);
-      }
-      if (!merged.hidden) {
-        orderedQaNodes.push(merged);
-      }
+    if (!existing) {
       continue;
     }
-    if (convertedSourceKeys.has(turn.sourceKey)) {
-      continue;
+    const merged = mergeQaNode(existing, turn, index);
+    if (merged !== existing) {
+      changedNodes.push(merged);
+      replaceInArray(nextNodes, merged);
     }
-
-    const created = createQaNode(documentId, turn, index);
-    changedNodes.push(created);
-    nextNodes.push(created);
-    orderedQaNodes.push(created);
+    if (!merged.hidden) {
+      orderedQaNodes.push(merged);
+    }
   }
 
   const liveSourceKeys = new Set(turns.map((turn) => turn.sourceKey));
@@ -162,6 +160,9 @@ export function collectQaTurns({ highlights = [], threads = [], messagesByThread
       pendingUserMessage = null;
       turns.push({
         sourceKey: message.id,
+        // 读者在阅读器里逐轮确认的标记，存在 assistant message 上
+        accepted: Boolean(message.graphAccepted),
+        acceptedAt: message.graphAcceptedAt || "",
         threadId: thread.id,
         highlightId: thread.highlightId || "",
         blockId: highlight?.blockId || "",
@@ -182,6 +183,26 @@ export function collectQaTurns({ highlights = [], threads = [], messagesByThread
     (a, b) =>
       String(a.askedAt).localeCompare(String(b.askedAt)) || String(a.sourceKey).localeCompare(String(b.sourceKey))
   );
+}
+
+/*
+ * 阅读证据 = 读者在阅读器里确认过「加入知识图谱」、但还没拖上画布的轮次。
+ * placed 用来把已经放上去的标出来，而不是从列表里抹掉，方便读者对照。
+ */
+export function collectAcceptedEvidence({ turns = [], nodes = [] }) {
+  const placedSourceKeys = new Set(
+    nodes.filter((node) => node.sourceKey && !node.hidden).map((node) => node.sourceKey)
+  );
+  return turns
+    .filter((turn) => turn.accepted)
+    .map((turn) => ({ ...turn, placed: placedSourceKeys.has(turn.sourceKey) }));
+}
+
+/* 把一条已确认的证据放到画布上：这是切片唯一的产生方式 */
+export async function placeQaTurnNode({ documentId, turn, x = 0, y = 0, order = 0 }) {
+  const node = { ...createQaNode(documentId, turn, order), x, y };
+  await dbPut("graphNodes", node);
+  return node;
 }
 
 export async function createNoteNode({ documentId, x = 0, y = 0, title = "", body = "" }) {

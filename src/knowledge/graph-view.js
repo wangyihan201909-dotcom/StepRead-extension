@@ -1,6 +1,8 @@
 import { NODE_SIZE, fitToView, hasPosition } from "./graph-layout.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
+/* 阅读证据拖到画布上时用的自定义 MIME，避免把普通文本拖拽也当成放置切片 */
+export const EVIDENCE_DRAG_TYPE = "application/x-stepread-evidence";
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 2;
 const DRAG_THRESHOLD_PX = 4;
@@ -50,6 +52,10 @@ export function createGraphView({ container, callbacks = {} }) {
   viewport.addEventListener("pointerdown", handlePointerDown);
   viewport.addEventListener("wheel", handleWheel, { passive: false });
   viewport.addEventListener("dblclick", handleDoubleClick);
+  // 从阅读证据抽屉拖一条已确认的问答进来，落点即切片位置
+  viewport.addEventListener("dragover", handleDragOver);
+  viewport.addEventListener("dragleave", handleDragLeave);
+  viewport.addEventListener("drop", handleDrop);
   window.addEventListener("pointermove", handlePointerMove);
   window.addEventListener("pointerup", handlePointerUp);
 
@@ -387,6 +393,37 @@ export function createGraphView({ container, callbacks = {} }) {
       return;
     }
     callbacks.onCanvasDoubleClick?.(toGraphPoint(event));
+  }
+
+  function getEvidenceKey(event) {
+    return event.dataTransfer?.types?.includes(EVIDENCE_DRAG_TYPE)
+      ? event.dataTransfer.getData(EVIDENCE_DRAG_TYPE)
+      : "";
+  }
+
+  function handleDragOver(event) {
+    if (!event.dataTransfer?.types?.includes(EVIDENCE_DRAG_TYPE)) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    viewport.classList.add("drop-target");
+  }
+
+  function handleDragLeave(event) {
+    if (event.target === viewport) {
+      viewport.classList.remove("drop-target");
+    }
+  }
+
+  function handleDrop(event) {
+    const sourceKey = getEvidenceKey(event);
+    viewport.classList.remove("drop-target");
+    if (!sourceKey) {
+      return;
+    }
+    event.preventDefault();
+    callbacks.onEvidenceDrop?.(sourceKey, toGraphPoint(event));
   }
 
   function toGraphPoint(event) {

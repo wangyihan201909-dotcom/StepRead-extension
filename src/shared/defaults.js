@@ -49,7 +49,8 @@ export const DEFAULT_SETTINGS = {
     documentFolders: []
   },
   knowledgeGraph: {
-    autoLinkMode: "sequence",
+    // 切片和连线都由读者手动建立，所以默认不自动连线；设置页仍可改回 sequence
+    autoLinkMode: "none",
     cardBody: "summary",
     cardBodyLimit: 160,
     chatContextScope: "summary-and-all",

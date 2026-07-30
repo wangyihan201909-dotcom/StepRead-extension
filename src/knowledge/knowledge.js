@@ -1,16 +1,19 @@
 import { nowIso } from "../shared/defaults.js";
 import { dbGetAllByIndex, dbPut, getDocumentWithBlocks } from "../shared/db.js";
 import { getSettings } from "../shared/store.js";
-import { generateKnowledgeReport } from "../shared/ai-client.js";
+import { generateGraphGreeting, generateKnowledgeReport } from "../shared/ai-client.js";
 import { createKnowledgeReportSignature } from "../shared/knowledge-signature.js";
 import { markdownToBlocks } from "../shared/markdown.js";
 import { renderBlocks } from "../shared/block-renderer.js";
 import { renderMessageContent } from "../shared/rich-text.js";
 import { openOrFocusExtensionPage } from "../shared/navigation.js";
 import {
+  collectAcceptedEvidence,
+  collectQaTurns,
   convertNodeToNote,
   createGraphQaNode,
   createGraphSignaturePayload,
+  createNodeTitle,
   createNoteNode,
   createUndoStack,
   createUserEdge,
@@ -18,6 +21,7 @@ import {
   getVisibleEdges,
   getVisibleNodes,
   loadGraph,
+  placeQaTurnNode,
   reconcileGraph,
   removeEdge,
   restoreGraphSnapshot,
@@ -35,7 +39,7 @@ import {
   runTimelineLayout,
   seedMissingPositions
 } from "./graph-layout.js";
-import { createGraphView } from "./graph-view.js";
+import { EVIDENCE_DRAG_TYPE, createGraphView } from "./graph-view.js";
 import { createGraphChat } from "./graph-chat.js";
 
 const KNOWLEDGE_REFRESH_KEY = "knowledgeRefreshSignal";
@@ -62,7 +66,8 @@ const state = {
   edges: [],
   selectedNodeId: "",
   selectedEdgeId: "",
-  summaryCollapsed: false,
+  // 摘要不再是页面主角：问候语在图谱问答里，长摘要默认收起
+  summaryCollapsed: true,
   chatCollapsed: false,
   evidenceCollapsed: true
 };
@@ -159,7 +164,8 @@ function init() {
       onConnect: handleConnect,
       onSelectEdge: openEdgePopover,
       onCanvasClick: clearSelection,
-      onCanvasDoubleClick: handleCanvasDoubleClick
+      onCanvasDoubleClick: handleCanvasDoubleClick,
+      onEvidenceDrop: handleEvidenceDrop
     }
   });
 
@@ -329,6 +335,8 @@ async function loadKnowledgeData(options = {}) {
     graphChat.pruneFocusNodes(getGraphNodes().map((node) => node.id));
     if (!options.external) {
       await graphChat.load();
+      // 打开知识图谱时生成开场问候语（不阻塞页面，失败就不显示）
+      void refreshGraphGreeting();
     } else {
       graphChat.renderFocusList();
     }
@@ -422,47 +430,133 @@ function renderDocumentState() {
   renderEvidenceList();
 }
 
+/*
+ * 阅读证据列的是「在阅读器里确认过加入知识图谱」的轮次，不是画布上的切片。
+ * 未放置的可以拖到画布上成为切片；已放置的留在列表里并标出来，点一下定位。
+ */
+/* 开场问候语：≤50 字，每次打开重新生成，不落库，失败就静默跳过 */
+async function refreshGraphGreeting() {
+  try {
+    const result = await generateGraphGreeting({
+      documentRecord: state.documentRecord,
+      nodes: getGraphNodes(),
+      edges: getGraphEdges(),
+      aiSettings: state.settings?.ai
+    });
+    if (result?.ok && result.content) {
+      graphChat.setGreeting(result.content);
+    }
+  } catch (error) {
+    // 问候语只是锦上添花，失败不该影响图谱本身
+  }
+}
+
+function getAcceptedEvidence() {
+  const turns = collectQaTurns({
+    highlights: state.highlights,
+    threads: state.threads,
+    messagesByThread: state.messagesByThread,
+    summaries: state.summaries,
+    blocks: state.blocks
+  });
+  return collectAcceptedEvidence({ turns, nodes: state.nodes });
+}
+
 function renderEvidenceList() {
   elements.evidenceList.replaceChildren();
-  const nodes = getGraphNodes();
-  if (!nodes.length) {
+  const evidence = getAcceptedEvidence();
+  if (!evidence.length) {
     const empty = document.createElement("p");
     empty.className = "evidence-empty";
-    empty.textContent = "暂无阅读证据。在 PDF 里提问（划线提问或直接对全文提问）后，图谱会读取这些记录。";
+    empty.textContent =
+      "还没有加入知识图谱的问答。回到阅读器，在想收录的那一轮下面点「＋ 加入知识图谱」，它就会出现在这里，然后拖到画布上。";
     elements.evidenceList.append(empty);
     return;
   }
 
-  for (const node of nodes) {
-    const item = document.createElement("button");
-    item.type = "button";
+  evidence.forEach((turn, index) => {
+    const item = document.createElement("div");
     item.className = "evidence-item";
-    item.dataset.nodeId = node.id;
+    item.dataset.sourceKey = turn.sourceKey;
+    if (turn.placed) {
+      item.classList.add("placed");
+    } else {
+      item.draggable = true;
+      item.addEventListener("dragstart", (event) => {
+        event.dataTransfer?.setData(EVIDENCE_DRAG_TYPE, turn.sourceKey);
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "copy";
+        }
+        item.classList.add("dragging");
+      });
+      item.addEventListener("dragend", () => item.classList.remove("dragging"));
+    }
 
     const title = document.createElement("span");
     title.className = "evidence-item-title";
-    title.textContent = `${node.kind === "qa" ? `#${(node.order ?? 0) + 1} ` : ""}${node.title || "未命名切片"}`;
+    title.textContent = `#${index + 1} ${createNodeTitle(turn.question || turn.threadTitle)}`;
 
     const text = document.createElement("span");
     text.className = "evidence-item-text";
-    text.textContent = createSnippet(node.summary || node.body || node.quote || node.answer, 120);
+    text.textContent = createSnippet(turn.summary || turn.answer, 120);
 
     const meta = document.createElement("span");
     meta.className = "evidence-item-meta";
-    meta.textContent = [node.chapterTitle, formatDateTime(node.createdAt)].filter(Boolean).join(" · ");
+    meta.textContent = [
+      turn.quote ? "锚在划线" : "针对全文",
+      turn.chapterTitle,
+      turn.placed ? "已在画布上" : "拖到画布上放置",
+      formatDateTime(turn.answeredAt)
+    ]
+      .filter(Boolean)
+      .join(" · ");
 
     item.append(title, text, meta);
     elements.evidenceList.append(item);
+  });
+}
+
+async function handleEvidenceDrop(sourceKey, graphPoint) {
+  const turn = getAcceptedEvidence().find((item) => item.sourceKey === sourceKey);
+  if (!turn) {
+    setStatus("这条证据已经不在列表里了，请重新读取记录。");
+    return;
   }
+  if (turn.placed) {
+    setStatus("这条证据已经在画布上了。");
+    return;
+  }
+
+  pushUndoSnapshot();
+  const spot = findFreeSpot(getGraphNodes(), graphPoint || getViewportCenterPoint());
+  const node = await placeQaTurnNode({
+    documentId,
+    turn,
+    x: spot.x,
+    y: spot.y,
+    order: state.nodes.length
+  });
+  state.nodes = [...state.nodes, node];
+  renderGraph();
+  renderEvidenceList();
+  await refreshSummaryFreshness();
+  setStatus("已放置切片。从卡片右侧圆点拖到另一张卡片就能建立关联。");
 }
 
 function handleEvidenceClick(event) {
   const item = event.target.closest?.(".evidence-item");
-  if (!item?.dataset.nodeId) {
+  const sourceKey = item?.dataset.sourceKey;
+  if (!sourceKey) {
     return;
   }
-  openNodeDetail(item.dataset.nodeId);
-  graphView.focusNode(item.dataset.nodeId);
+  // 已放置的点一下定位到画布上那张卡；没放置的点击不做事，请拖到画布上
+  const node = getGraphNodes().find((entry) => entry.sourceKey === sourceKey);
+  if (!node) {
+    setStatus("这条证据还没放到画布上，拖到右边画布即可。");
+    return;
+  }
+  openNodeDetail(node.id);
+  graphView.focusNode(node.id);
 }
 
 /* ----------------------------------------------------------------- graph edits */
