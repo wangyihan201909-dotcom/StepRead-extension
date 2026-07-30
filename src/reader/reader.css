@@ -626,6 +626,16 @@ textarea {
 
 .message-list {
   gap: 10px;
+  /*
+   * 隐式列宽是 auto，会被最宽的子元素（长 token、代码块、模型名）撑出容器，
+   * 于是消息区出现横向滚动条并把文字截断。锁成可收缩的单列。
+   */
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.round,
+.round-main {
+  min-width: 0;
 }
 
 .document-list {
@@ -1844,13 +1854,6 @@ figcaption {
 }
 
 /* ---------- 链式轮次：左侧 22px 轨道兼作路径图例 ---------- */
-.path-summary {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: var(--app-xs-font-size);
-  white-space: nowrap;
-}
-
 .message-list.round-list {
   gap: 0;
 }
@@ -1994,6 +1997,8 @@ figcaption {
   display: block;
   width: 100%;
   min-height: 0;
+  /* 全局 button 规则是 nowrap，引用原文必须换行，否则会把整列撑宽 */
+  white-space: normal;
   margin-bottom: 8px;
   padding: 7px 10px;
   border: 1px solid var(--selection-border);

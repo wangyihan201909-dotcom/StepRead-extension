@@ -137,7 +137,6 @@ const elements = {
   composer: document.querySelector(".composer"),
   questionInput: document.querySelector("#questionInput"),
   sendQuestionButton: document.querySelector("#sendQuestionButton"),
-  pathSummary: document.querySelector("#pathSummary"),
   pathRail: document.querySelector("#pathRail"),
   pathRailScroll: document.querySelector("#pathRailScroll"),
   pathRailInner: document.querySelector("#pathRailInner"),
@@ -5693,7 +5692,6 @@ async function renderMessages(options = {}) {
   if (!state.activeThread) {
     state.roundTree = null;
     state.activeRoundId = "";
-    renderPathSummary(null, 0);
     renderPathRail();
     updateSendState();
     if (state.pathCanvas.open) {
@@ -5727,7 +5725,6 @@ async function renderMessages(options = {}) {
     elements.messageList.append(buildRoundTailHint(currentRound));
   }
 
-  renderPathSummary(path, tree.rounds.length);
   renderPathRail();
   updateSendState();
   if (state.pathCanvas.open) {
@@ -6119,19 +6116,6 @@ function openBranchPop(anchor, round, activeChildIndex) {
   }
   pop.style.left = `${Math.max(8, left)}px`;
   pop.style.top = `${Math.max(8, top)}px`;
-}
-
-function renderPathSummary(path, total) {
-  if (!elements.pathSummary) {
-    return;
-  }
-  if (!path?.length) {
-    elements.pathSummary.textContent = "";
-    return;
-  }
-  elements.pathSummary.textContent = total > path.length
-    ? `第 ${path.length} 轮 / 共 ${total} 轮`
-    : `第 ${path.length} 轮`;
 }
 
 function getTurnStateForRound(round) {
