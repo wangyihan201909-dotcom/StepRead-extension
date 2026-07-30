@@ -157,6 +157,7 @@ const elements = {
 const QUESTION_PLACEHOLDER = "输入问题，Enter 发送，Shift+Enter 换行";
 const BRANCH_PLACEHOLDER = "从这一轮提问将新建一条支线…";
 const DOCUMENT_PLACEHOLDER = "直接提问（针对全文），或先在正文划线再问";
+const SELECTION_PLACEHOLDER = "就这段新划线提问（会另开一条问答）…";
 const FORK_PIP_LIMIT = 5;
 const forkBadgeMemory = new Map();
 let branchPopElement = null;
@@ -5335,6 +5336,9 @@ function renderSelection() {
   }
 
   const isDraft = Boolean(draftText) || isDraftHighlight(state.activeHighlight);
+  // 正在看一条已保存的对话时又划了新线：这条划线属于「下一问」，不属于眼前这段对话
+  const pendingOverExisting =
+    Boolean(draftText) && Boolean(state.activeThread) && !isDraftThread(state.activeThread);
   const wrap = document.createElement("div");
   wrap.className = "selection-chip-wrap";
 
@@ -5346,9 +5350,13 @@ function renderSelection() {
   icon.textContent = "❝";
   icon.setAttribute("aria-hidden", "true");
   const label = document.createElement("span");
-  label.textContent = `1 条划线 · ${text.length} 字${isDraft ? " · 未保存" : ""}`;
+  label.textContent = pendingOverExisting
+    ? `新划线 · ${text.length} 字 · 发送后另开一条`
+    : `1 条划线 · ${text.length} 字${isDraft ? " · 未保存" : ""}`;
   chip.append(icon, label);
-  chip.title = "点击定位到正文划线处";
+  chip.title = pendingOverExisting
+    ? "这段划线会开一条新的问答，不会接在当前对话后面"
+    : "点击定位到正文划线处";
   chip.addEventListener("click", () => {
     const highlightId = state.activeHighlight?.id;
     if (highlightId) {
@@ -5378,8 +5386,12 @@ function renderSelection() {
     close.setAttribute("aria-label", "取消这条划线");
     close.addEventListener("click", async (event) => {
       event.stopPropagation();
+      // 当前对话是已保存的那种时，discardUnsubmittedDraft 不会重渲染，这里补上
       await discardUnsubmittedDraft({ clearSelection: true, render: true });
-      setStatus("已取消这条划线草稿。");
+      window.getSelection()?.removeAllRanges();
+      hideSelectionAskButton();
+      renderSelection();
+      setStatus("已取消这条划线。");
     });
     wrap.append(close);
   }
@@ -6398,8 +6410,12 @@ async function captureSelection() {
   const lastRange = blockRanges[blockRanges.length - 1];
 
   await discardUnsubmittedDraft({ clearSelection: false, render: false });
-  state.activeThread = null;
-  state.activeHighlight = null;
+  /*
+   * 这里以前会把 activeThread / activeHighlight 清空，于是随便划一下（甚至双击选词、
+   * 拖动误选）就把正在看的对话从面板上抹掉，看起来像历史丢了。
+   * 现在只登记这条待用的划线，当前对话继续显示；真正分流放到 sendQuestion：
+   * 有待用划线就一定另开一条划线问答，不会误接到当前对话上。
+   */
   state.selectedText = selectedText;
   state.selectedBlockId = firstRange.blockId;
   state.selectedBlockRanges = blockRanges;
@@ -6410,9 +6426,7 @@ async function captureSelection() {
 
   renderSelection();
   renderThreads();
-  if (state.panelView === "detail") {
-    void renderMessages();
-  }
+  updateSendState();
   showSelectionAskButton(selection);
 }
 
@@ -6748,12 +6762,14 @@ async function sendQuestion(options = {}) {
     return;
   }
 
-  if (!state.activeThread && state.selectedText) {
+  /*
+   * 有待用划线 → 这一问一定归到新的划线问答里，即使当前正在看别的对话。
+   * 没有划线且没有当前对话 → 开一条针对全文的 thread。
+   * 没有划线但有当前对话 → 直接接在当前对话后面。
+   */
+  if (state.selectedText) {
     await createThreadFromSelection({ focusInput: false });
-  }
-
-  // 没有划线也能问：开一条针对全文的 thread
-  if (!state.activeThread) {
+  } else if (!state.activeThread) {
     await createDocumentThread();
   }
 
@@ -7224,13 +7240,18 @@ function updateSendState() {
 
   const branching = Boolean(getActiveRound()?.children?.length);
   const freshQuestion = !state.activeThread && !state.selectedText;
+  // 有待用划线时，这一问会另开一条，占位符要说清楚，别让人以为接在当前对话后面
+  const pendingSelection =
+    Boolean(state.selectedText) && Boolean(state.activeThread) && !isDraftThread(state.activeThread);
   elements.questionInput.readOnly = isRunning;
   elements.questionInput.setAttribute("aria-busy", String(isRunning));
-  elements.questionInput.placeholder = branching
-    ? BRANCH_PLACEHOLDER
-    : freshQuestion
-      ? DOCUMENT_PLACEHOLDER
-      : QUESTION_PLACEHOLDER;
+  elements.questionInput.placeholder = pendingSelection
+    ? SELECTION_PLACEHOLDER
+    : branching
+      ? BRANCH_PLACEHOLDER
+      : freshQuestion
+        ? DOCUMENT_PLACEHOLDER
+        : QUESTION_PLACEHOLDER;
   elements.composer?.classList.toggle("branching", branching);
   elements.composer?.classList.toggle("answer-running", isRunning);
   elements.sendQuestionButton.textContent = isRunning ? "停止" : isEditing ? "重新发送" : "发送";

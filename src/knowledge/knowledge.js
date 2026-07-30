@@ -8,7 +8,7 @@ const KNOWLEDGE_REFRESH_KEY = "knowledgeRefreshSignal";
 const KNOWLEDGE_REFRESH_DEBOUNCE_MS = 320;
 const KNOWLEDGE_GENERATION_TIMEOUT_MS = 300_000;
 const KNOWLEDGE_GENERATION_STAGES = [
-  { minElapsedSeconds: 0, label: "整理划线与问答" },
+  { minElapsedSeconds: 0, label: "整理证据条目与问答" },
   { minElapsedSeconds: 2, label: "生成结构化关系" },
   { minElapsedSeconds: 5, label: "等待模型返回" }
 ];
@@ -41,7 +41,7 @@ const elements = {
   reloadButton: document.querySelector("#reloadButton"),
   generateButton: document.querySelector("#generateButton"),
   userPrompt: document.querySelector("#userPrompt"),
-  highlightCount: document.querySelector("#highlightCount"),
+  evidenceCount: document.querySelector("#evidenceCount"),
   threadCount: document.querySelector("#threadCount"),
   messageCount: document.querySelector("#messageCount"),
   summaryCount: document.querySelector("#summaryCount"),
@@ -176,7 +176,7 @@ async function renderCachedReportState() {
     return;
   }
 
-  setStatus("已显示上次知识图谱；当前划线、问答、摘要或 prompt 已变化，请点击生成知识图谱。");
+  setStatus("已显示上次知识图谱；当前证据条目、问答、摘要或 prompt 已变化，请点击生成知识图谱。");
 }
 
 async function handleGenerateReport() {
@@ -269,7 +269,8 @@ async function handlePromptInput() {
 
 function renderDocumentState() {
   elements.documentTitle.textContent = state.documentRecord?.title || "未命名文档";
-  elements.highlightCount.textContent = String(state.highlights.length);
+  // 口径改成证据条目：全文提问不产生划线，按划线数统计会让页面看起来没更新
+  elements.evidenceCount.textContent = String(createEvidenceItems().length);
   elements.threadCount.textContent = String(state.threads.length);
   elements.messageCount.textContent = String(getMessageCount());
   elements.summaryCount.textContent = String(state.summaries.length);
@@ -282,7 +283,7 @@ function renderEvidenceList() {
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "evidence-empty";
-    empty.textContent = "暂无阅读证据。先在 PDF 中划线并提问，知识图谱会读取这些记录。";
+    empty.textContent = "暂无阅读证据。在 PDF 里提问（划线提问或直接对全文提问）后，这里会列出对应的证据条目。";
     elements.evidenceList.append(empty);
     return;
   }
@@ -374,7 +375,7 @@ function getMessageCount() {
 
 function createEvidenceTitle(text) {
   const normalized = normalizeWhitespace(text);
-  return normalized ? createEvidenceSnippet(normalized, 34) : "未命名划线";
+  return normalized ? createEvidenceSnippet(normalized, 34) : "未命名条目";
 }
 
 function createEvidenceSnippet(text, limit = 180) {
@@ -390,6 +391,7 @@ function createEvidenceMeta({ highlight, thread, messages, summaries }) {
   const qaMessages = (messages || []).filter((message) => message.role !== "selection");
   const qaTurns = Math.floor(qaMessages.length / 2);
   const parts = [
+    highlight ? "锚在划线" : "针对全文",
     messageCount ? `${messageCount} 条问答对话消息` : "暂无问答对话消息",
     qaTurns ? `${qaTurns} 轮用户/AI 问答` : "尚未提问",
     summaries?.length ? `${summaries.length} 条摘要` : "暂无摘要",
