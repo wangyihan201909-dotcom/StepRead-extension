@@ -18,7 +18,8 @@ export function analyzeContextCapabilities({
   highlights = [],
   threads = [],
   messagesByThread = {},
-  summaries = []
+  summaries = [],
+  webResults = []
 } = {}) {
   const orderedBlocks = normalizeBlocks(blocks);
   const selectedBlockIndexes = resolveSelectedBlockIndexes(orderedBlocks, highlight);
@@ -68,7 +69,8 @@ export function analyzeContextCapabilities({
     beforeLastHighlightBlocks: beforeLastHighlightBlocks.length > 0,
     sectionSummaries: sectionSummaries.length > 0,
     threadHistory: currentThreadMessages.length > 0 || allThreadMessages.length > 0 || qaSummaries.length > 0,
-    knowledgeHighlights: (highlights || []).some((entry) => Boolean(entry?.id || normalizeContextText(entry?.text)))
+    knowledgeHighlights: (highlights || []).some((entry) => Boolean(entry?.id || normalizeContextText(entry?.text))),
+    webResults: (webResults || []).length > 0
   };
 
   const requestSources = {
@@ -389,6 +391,9 @@ function getAvailableSelectionSourceNames(capabilities, options = {}) {
   }
   if (chapterTextScope === "full-text" && available.fullText) {
     sources.push("document.full_text_blocks");
+  }
+  if (available.webResults) {
+    sources.push("web.search_results");
   }
   if (options.includeThreadHistory && capabilities.counts.currentThreadMessages > 0) {
     sources.push("thread.current_messages");

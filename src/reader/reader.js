@@ -27,6 +27,7 @@ import {
   normalizePdfSourceUrl
 } from "../shared/paper-deepreport-adapter.js";
 import { getSettings, saveSettings } from "../shared/store.js";
+import { searchWeb } from "../shared/web-search.js";
 
 const KNOWLEDGE_REFRESH_KEY = "knowledgeRefreshSignal";
 const PDFJS_VERSION = "1.10.100";
@@ -80,6 +81,9 @@ const state = {
   sidebarTab: "documents",
   activeRoundId: "",
   roundTree: null,
+  // 联网查询：候选结果与读者勾中的条目（勾中的才会进 prompt）
+  webSearchResults: [],
+  webContextItems: [],
   pathCanvas: { open: false, x: 60, y: 60, scale: 1, boxes: null },
   pdfViewerZoom: 1,
   pdfZoomMode: "fit-width",
@@ -128,6 +132,13 @@ const elements = {
   detailLayer: document.querySelector("#detailLayer"),
   knowledgeButton: document.querySelector("#knowledgeButton"),
   clearConversationButton: document.querySelector("#clearConversationButton"),
+  webSearchToggleButton: document.querySelector("#webSearchToggleButton"),
+  webSearchPanel: document.querySelector("#webSearchPanel"),
+  webSearchInput: document.querySelector("#webSearchInput"),
+  webSearchRunButton: document.querySelector("#webSearchRunButton"),
+  webSearchCloseButton: document.querySelector("#webSearchCloseButton"),
+  webSearchStatus: document.querySelector("#webSearchStatus"),
+  webSearchResults: document.querySelector("#webSearchResults"),
   selectionAskButton: document.querySelector("#selectionAskButton"),
   documentsTab: document.querySelector("#documentsTab"),
   tocTab: document.querySelector("#tocTab"),
@@ -386,6 +397,15 @@ function bindEvents() {
   elements.tocTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.knowledgeButton.addEventListener("click", openKnowledgePage);
   elements.clearConversationButton.addEventListener("click", handleClearConversation);
+  elements.webSearchToggleButton.addEventListener("click", toggleWebSearchPanel);
+  elements.webSearchRunButton.addEventListener("click", runWebSearch);
+  elements.webSearchCloseButton.addEventListener("click", closeWebSearchPanel);
+  elements.webSearchInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void runWebSearch();
+    }
+  });
   elements.sendQuestionButton.addEventListener("click", handleQuestionButtonClick);
   elements.messageList.addEventListener("click", handleMessageListClick);
   elements.pathCanvasButton.addEventListener("click", openPathCanvas);
@@ -5263,9 +5283,14 @@ function renderSelection() {
    * 已发生的轮次各自把划线原文显示在自己那一轮里。
    * 因此它永远可以取消：没有「已保存所以不能删」这种状态。
    */
+  // 勾中的联网结果和划线并列显示：这一问会带上什么，全部摆在输入框上方
+  for (const item of state.webContextItems) {
+    host.append(buildWebContextChip(item));
+  }
+
   const text = state.selectedText || "";
   if (!text) {
-    host.hidden = true;
+    host.hidden = state.webContextItems.length === 0;
     updateSendState();
     return;
   }
@@ -5766,6 +5791,29 @@ function buildRoundElement(round, index, path, fallbackModelLabel, isLast) {
     quote.title = "点击定位到正文划线处";
     quote.addEventListener("click", () => scrollHighlightIntoCenter(highlight.id));
     main.append(quote);
+  }
+
+  const webContext = Array.isArray(round.user?.webContext) ? round.user.webContext : [];
+  if (webContext.length) {
+    const sources = document.createElement("div");
+    sources.className = "round-web-sources";
+    const lead = document.createElement("span");
+    lead.className = "round-web-lead";
+    lead.textContent = "这一问带了联网结果：";
+    sources.append(lead);
+    for (const item of webContext) {
+      const link = document.createElement(item.url ? "a" : "span");
+      link.className = "round-web-source";
+      link.textContent = item.source || item.title;
+      link.title = item.title;
+      if (item.url) {
+        link.href = item.url;
+        link.target = "_blank";
+        link.rel = "noreferrer noopener";
+      }
+      sources.append(link);
+    }
+    main.append(sources);
   }
 
   const question = document.createElement("div");
@@ -6655,7 +6703,8 @@ async function sendQuestion(options = {}) {
     question,
     model: modelAtQuestion,
     existingUserMessage: options.userMessage,
-    parentId: parentRoundId
+    parentId: parentRoundId,
+    webContext: state.webContextItems
   });
   state.activeRoundId = userMessage.id;
   const answerRun = {
@@ -6669,6 +6718,7 @@ async function sendQuestion(options = {}) {
     userMessage,
     thread: { ...state.activeThread },
     highlight: state.activeHighlight ? { ...state.activeHighlight } : null,
+    webResults: [...state.webContextItems],
     documentRecord: { ...state.currentDocument },
     blocks: [...state.blocks],
     highlights: [...state.highlights],
@@ -6707,6 +6757,7 @@ async function sendQuestion(options = {}) {
       threads: answerRun.threads,
       messagesByThread,
       question,
+      webResults: answerRun.webResults,
       documentRecord: answerRun.documentRecord,
       documentTitle: answerRun.documentRecord.title,
       aiSettings: answerRun.aiSettings,
@@ -6746,7 +6797,7 @@ async function sendQuestion(options = {}) {
   }
 }
 
-async function persistUserQuestionMessage({ question, model, existingUserMessage, parentId = "" }) {
+async function persistUserQuestionMessage({ question, model, existingUserMessage, parentId = "", webContext = [] }) {
   const now = nowIso();
   const editableMessage = existingUserMessage || (await getEditingQuestionMessage());
   const userMessage = editableMessage
@@ -6765,6 +6816,8 @@ async function persistUserQuestionMessage({ question, model, existingUserMessage
         role: "user",
         // 空串代表这条 thread 的第一轮；重新编辑旧问题时不动它原有的父轮
         parentId,
+        // 这一问带了哪些联网结果，存下来才能在轮次里回看来源
+        webContext: webContext.map((item) => ({ title: item.title, url: item.url, snippet: item.snippet, source: item.source })),
         content: question,
         model,
         answerStatus: "submitted",
@@ -6876,6 +6929,11 @@ async function saveSuccessfulAnswer(answerRun, content) {
     state.editingQuestion = null;
   }
   elements.questionInput.value = "";
+  // 这一问的联网条目已经归档到该轮，输入区不再挂着
+  state.webContextItems = [];
+  state.webSearchResults = [];
+  closeWebSearchPanel();
+  renderSelection();
   notifyKnowledgeDataChanged("answer-created");
 
   await renderMessages({ preserveViewerScroll: true });
@@ -7247,6 +7305,145 @@ async function handleClearConversation() {
   setStatus(
     `已清空：${summary.threads} 条问答、${summary.messages} 条消息、${summary.highlights} 条划线、${summary.summaries} 条摘要。知识图谱切片未删除。`
   );
+}
+
+/* 勾中的联网结果做成气泡：hover 看摘要，× 撤掉 */
+function buildWebContextChip(item) {
+  const wrap = document.createElement("div");
+  wrap.className = "selection-chip-wrap web-context-chip";
+
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "selection-chip";
+  const icon = document.createElement("span");
+  icon.className = "chip-icon";
+  icon.textContent = "🌐";
+  icon.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.textContent = item.source || item.title;
+  chip.append(icon, label);
+  chip.title = item.url || item.title;
+  chip.addEventListener("click", () => {
+    if (item.url) {
+      setStatus(`来源：${item.url}`);
+    }
+  });
+
+  const pop = document.createElement("div");
+  pop.className = "selection-chip-pop";
+  pop.setAttribute("role", "tooltip");
+  const popLabel = document.createElement("span");
+  popLabel.className = "pop-label";
+  popLabel.textContent = `联网结果 · ${item.title}`;
+  const popText = document.createElement("span");
+  popText.className = "pop-text";
+  popText.textContent = item.snippet || item.url || "";
+  pop.append(popLabel, popText);
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "selection-chip-close";
+  close.textContent = "×";
+  close.title = "这一问不带这条";
+  close.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleWebContextItem(item, false);
+    renderWebSearchResults();
+  });
+
+  wrap.append(chip, pop, close);
+  return wrap;
+}
+
+/* ---------- 联网查询：搜到的结果先给读者勾，勾中的才进 prompt ---------- */
+
+function toggleWebSearchPanel() {
+  const willOpen = elements.webSearchPanel.hidden;
+  elements.webSearchPanel.hidden = !willOpen;
+  if (!willOpen) {
+    return;
+  }
+  if (!elements.webSearchInput.value.trim()) {
+    elements.webSearchInput.value = elements.questionInput.value.trim();
+  }
+  elements.webSearchInput.focus();
+}
+
+function closeWebSearchPanel() {
+  elements.webSearchPanel.hidden = true;
+}
+
+async function runWebSearch() {
+  const settings = await getSettings();
+  const query = elements.webSearchInput.value.trim() || elements.questionInput.value.trim();
+  if (!query) {
+    elements.webSearchStatus.textContent = "先写一个搜索词，或者在下面的输入框里写好问题。";
+    return;
+  }
+
+  elements.webSearchRunButton.disabled = true;
+  elements.webSearchStatus.textContent = "正在联网查询…";
+  try {
+    const results = await searchWeb({ query, aiSettings: settings.ai });
+    state.webSearchResults = results;
+    renderWebSearchResults();
+    elements.webSearchStatus.textContent = results.length
+      ? `找到 ${results.length} 条。勾选要带进这一问的，没勾的不会发给模型。`
+      : "没有搜到结果，换个搜索词试试。";
+    await logTask("web.search.performed", {
+      documentId: state.currentDocument?.id || "",
+      provider: settings.ai?.webSearch?.provider || "",
+      results: results.length
+    });
+  } catch (error) {
+    state.webSearchResults = [];
+    renderWebSearchResults();
+    elements.webSearchStatus.textContent = getErrorMessage(error);
+  } finally {
+    elements.webSearchRunButton.disabled = false;
+  }
+}
+
+function renderWebSearchResults() {
+  const host = elements.webSearchResults;
+  host.replaceChildren();
+  const picked = new Set(state.webContextItems.map((item) => item.url || item.title));
+
+  for (const result of state.webSearchResults) {
+    const key = result.url || result.title;
+    const row = document.createElement("label");
+    row.className = "web-search-result";
+
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = picked.has(key);
+    box.addEventListener("change", () => toggleWebContextItem(result, box.checked));
+
+    const body = document.createElement("span");
+    body.className = "web-search-result-body";
+    const title = document.createElement("span");
+    title.className = "web-search-result-title";
+    title.textContent = result.title;
+    const meta = document.createElement("span");
+    meta.className = "web-search-result-meta";
+    meta.textContent = result.source || result.url || (result.demo ? "占位结果" : "");
+    const snippet = document.createElement("span");
+    snippet.className = "web-search-result-snippet";
+    snippet.textContent = result.snippet;
+    body.append(title, meta, snippet);
+
+    row.append(box, body);
+    host.append(row);
+  }
+}
+
+function toggleWebContextItem(result, checked) {
+  const key = result.url || result.title;
+  const rest = state.webContextItems.filter((item) => (item.url || item.title) !== key);
+  state.webContextItems = checked
+    ? [...rest, { title: result.title, url: result.url, snippet: result.snippet, source: result.source }]
+    : rest;
+  renderSelection();
 }
 
 async function openKnowledgePage() {

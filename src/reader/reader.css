@@ -1509,6 +1509,135 @@ figcaption {
   min-width: 0;
 }
 
+/* ---------- 联网查询：结果先列出来勾选，勾中的才会进 prompt ---------- */
+.web-search-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-raised);
+}
+
+.web-search-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+}
+
+.web-search-bar input {
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--control-border);
+  border-radius: 4px;
+  background: var(--panel-bg);
+  color: var(--text);
+  font-size: var(--app-small-font-size);
+}
+
+.web-search-bar button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: var(--app-xs-font-size);
+}
+
+.web-search-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--app-xs-font-size);
+  line-height: 1.5;
+}
+
+.web-search-results {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.web-search-result {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-bg);
+  cursor: pointer;
+}
+
+.web-search-result:hover {
+  border-color: var(--control-border);
+}
+
+.web-search-result-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.web-search-result-title {
+  color: var(--text);
+  font-size: var(--app-small-font-size);
+  font-weight: 650;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.web-search-result-meta {
+  color: var(--muted);
+  font-size: var(--app-xs-font-size);
+  overflow-wrap: anywhere;
+}
+
+.web-search-result-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--muted-strong);
+  font-size: var(--app-xs-font-size);
+  line-height: 1.5;
+}
+
+.web-context-chip .selection-chip {
+  max-width: 150px;
+}
+
+/* 某一轮当时带过的联网来源 */
+.round-web-sources {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.round-web-lead {
+  color: var(--muted);
+  font-size: var(--app-xs-font-size);
+}
+
+.round-web-source {
+  max-width: 100%;
+  padding: 1px 7px;
+  border: 1px solid var(--control-border);
+  border-radius: 999px;
+  color: var(--muted-strong);
+  font-size: var(--app-xs-font-size);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.round-web-source:hover {
+  border-color: var(--selection-marker);
+  color: var(--text);
+}
+
 /* ---------- 划线小气泡：贴在输入框上方，hover 看原文 ---------- */
 .selection-chips {
   display: flex;

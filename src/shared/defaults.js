@@ -8,6 +8,16 @@ export const DEFAULT_SETTINGS = {
     apiKey: "",
     model: "gpt-4o-mini",
     demoMode: true,
+    /*
+     * 联网查询：搜到的结果不会自动进 prompt，先列出来由读者勾选，
+     * 勾中的才作为可见的上下文条目发出去。搜索服务和模型服务是两个 key。
+     */
+    webSearch: {
+      enabled: false,
+      provider: "tavily",
+      apiKey: "",
+      maxResults: 5
+    },
     context: {
       selection: {
         neighborBlockCount: 1,
