@@ -1065,6 +1065,81 @@ h3 {
   line-height: 1.5;
 }
 
+/* 关系输入框 + 魔法棒：想不出关系时让 AI 给个短语 */
+.edge-relation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.edge-suggest-button {
+  min-height: 32px;
+  width: 34px;
+  padding: 0;
+  border: 1px solid var(--control-border);
+  border-radius: 4px;
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.edge-suggest-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--panel-soft);
+}
+
+.edge-suggest-button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.edge-suggest-button.busy {
+  animation: edge-suggest-pulse 900ms ease-in-out infinite;
+}
+
+@keyframes edge-suggest-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edge-suggest-button.busy {
+    animation: none;
+  }
+}
+
+/* 阅读证据里删除某一轮问答 */
+.evidence-item-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+.evidence-item-delete {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: var(--app-font-xs);
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.evidence-item-delete:hover {
+  color: var(--danger, #b42318);
+  text-decoration: underline;
+}
+
+.evidence-item-delete.armed {
+  color: #ffffff;
+  background: #b42318;
+  border-radius: 4px;
+  text-decoration: none;
+  font-weight: 700;
+}
+
 .edge-popover-actions {
   display: flex;
   gap: 6px;

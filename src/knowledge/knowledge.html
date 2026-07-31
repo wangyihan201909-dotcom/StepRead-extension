@@ -170,7 +170,10 @@
     <div id="edgePopover" class="edge-popover" hidden role="dialog" aria-label="编辑关联">
       <p id="edgePopoverMeta" class="edge-popover-meta"></p>
       <label class="field-label" for="edgeRelationInput">关联说明</label>
-      <input id="edgeRelationInput" type="text" maxlength="40" placeholder="例如：前提 / 反例 / 同一个概念">
+      <div class="edge-relation-row">
+        <input id="edgeRelationInput" type="text" maxlength="40" placeholder="例如：前提 / 反例 / 同一个概念">
+        <button id="edgeSuggestButton" type="button" class="edge-suggest-button" title="没想法时让 AI 给一个关系短语">🪄</button>
+      </div>
       <div class="edge-popover-actions">
         <button id="edgeConfirmButton" type="button">保存</button>
         <button id="edgeReverseButton" type="button" class="secondary">反向</button>

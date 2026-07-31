@@ -160,6 +160,8 @@ export function collectQaTurns({ highlights = [], threads = [], messagesByThread
       pendingUserMessage = null;
       turns.push({
         sourceKey: message.id,
+        // 删除这一轮时要同时删掉提问那条消息
+        userMessageId: userMessage?.id || "",
         // 读者在阅读器里逐轮确认的标记，存在 assistant message 上
         accepted: Boolean(message.graphAccepted),
         acceptedAt: message.graphAcceptedAt || "",

@@ -320,6 +320,91 @@ function createDemoGraphGreeting(nodeCount, edgeCount) {
   return `已经放了 ${nodeCount} 个切片、${edgeCount} 条关联，想先理清哪一块？`;
 }
 
+/*
+ * 连线时的「魔法棒」：读者拉了一条线但想不好这两个切片是什么关系，
+ * 让模型给一个短语当起点。只是建议 —— 输入框仍然可以改，保存的是读者确认的那句。
+ */
+export async function suggestEdgeRelation({
+  documentRecord,
+  fromNode,
+  toNode,
+  aiSettings: providedAiSettings,
+  signal,
+  timeoutMs
+} = {}) {
+  const settings = providedAiSettings ? null : await getSettings();
+  const aiSettings = providedAiSettings || settings?.ai || {};
+  const startedAt = nowIso();
+  const describe = (node, label) =>
+    [
+      `${label}标题：${node?.title || "未命名切片"}`,
+      node?.question ? `${label}问题：${node.question}` : "",
+      node?.summary || node?.answer || node?.body
+        ? `${label}内容：${String(node.summary || node.answer || node.body).slice(0, 400)}`
+        : ""
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+  const apiMessages = [
+    {
+      role: "system",
+      content:
+        "你在帮读者标注知识图谱里两个切片之间的关系。只输出一个不超过 12 个字的中文短语，例如：前提、反例、同一概念的不同说法、A 导致 B、证据支持。不要输出句子、标点、解释或引号。如果两者看不出明确关系，就输出：关系待定。"
+    },
+    {
+      role: "user",
+      content: [
+        `文档：${documentRecord?.title || "未命名文档"}`,
+        describe(fromNode, "起点切片"),
+        describe(toNode, "终点切片"),
+        "请给出从起点到终点的关系短语。"
+      ].join("\n\n")
+    }
+  ];
+  const runBase = {
+    id: createId("airun"),
+    threadId: "",
+    highlightId: "",
+    model: aiSettings.model || "",
+    request: {
+      baseUrl: aiSettings.baseUrl || "",
+      model: aiSettings.model || "",
+      messages: apiMessages.map((message) => ({ role: message.role, content: message.content }))
+    },
+    startedAt
+  };
+
+  if (aiSettings.demoMode || !aiSettings.apiKey) {
+    const responseText = "关系待定";
+    await logAiRun({
+      ...runBase,
+      provider: "local-demo",
+      response: { content: responseText },
+      status: "success",
+      completedAt: nowIso()
+    });
+    return createAiResult({
+      ok: true,
+      content: responseText,
+      demo: true,
+      model: aiSettings.model || "",
+      runId: runBase.id
+    });
+  }
+
+  return runLoggedChatCompletion({
+    aiSettings,
+    apiMessages,
+    temperature: 0.5,
+    runBase,
+    signal,
+    timeoutMs,
+    stream: false,
+    emptyError: "模型没有给出关系建议。"
+  });
+}
+
 export async function askGraphChat({
   documentRecord,
   report = "",

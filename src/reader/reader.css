@@ -2517,7 +2517,10 @@ button.fork-badge:hover .fork-num { color: var(--panel-bg); }
   align-items: flex-start;
   gap: 4px;
   width: 100%;
+  min-width: 0;
   min-height: 0;
+  /* 全局 button 规则是 nowrap，问题原文必须换行，否则会撑出卡片 */
+  white-space: normal;
   padding: 7px 8px;
   border: 0;
   border-radius: 9px;

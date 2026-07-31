@@ -183,6 +183,44 @@ export async function deletePendingPdfImport(importId) {
 }
 
 /*
+ * 删除单独一轮问答：这一轮的问题、回答，以及挂在它们上面的摘要。
+ * 同样不动 graphNodes —— 已经放到画布上的切片会变成孤立，由读者自己决定去留。
+ */
+export async function deleteQaTurnRecords({ userMessageId = "", assistantMessageId = "" } = {}) {
+  const ids = [userMessageId, assistantMessageId].filter(Boolean);
+  const summary = { messages: 0, summaries: 0 };
+  if (!ids.length) {
+    return summary;
+  }
+
+  const db = await openReaderDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(["messages", "summaries"], "readwrite");
+    const messageStore = tx.objectStore("messages");
+    const summaryStore = tx.objectStore("summaries");
+
+    for (const id of ids) {
+      const request = messageStore.get(id);
+      request.onsuccess = () => {
+        if (!request.result) {
+          return;
+        }
+        summary.messages += 1;
+        messageStore.delete(id);
+      };
+      request.onerror = () => tx.abort();
+      deleteKeysByIndex(summaryStore, "by_messageId", id, (count) => {
+        summary.summaries += count;
+      });
+    }
+
+    tx.oncomplete = () => resolve(summary);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+/*
  * 清空一个文档的对话记录：划线、thread、消息、摘要、AI 运行日志。
  * 故意不动 graphNodes / graphEdges / graphChatMessages —— 那是读者手工策展的
  * 知识图谱，清对话不该顺手毁掉它。失去来源的切片会被 reconcileGraph 标成孤立。

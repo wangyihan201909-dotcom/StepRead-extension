@@ -129,5 +129,20 @@
         host.append(article);
       });
     </script>
+  
+    <!-- 对话路径图的节点：验证长问题会换行而不是撑出卡片 -->
+    <div class="path-canvas-overlay" id="canvasProbe" style="position:static;height:260px">
+      <div class="path-canvas-stage" style="height:240px">
+        <div class="path-canvas-world" style="transform:translate(20px,20px)">
+          <div class="path-canvas-node current" style="left:0;top:0" id="probeNode">
+            <button type="button" class="node-open">
+              <span class="node-round">第 2 轮</span>
+              <span class="node-question">文章的标题为什么叫主体性的极化与定价</span>
+            </button>
+            <button type="button" class="node-branch">＋ 从这里继续问</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </body>
 </html>

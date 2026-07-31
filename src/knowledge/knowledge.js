@@ -1,7 +1,7 @@
 import { nowIso } from "../shared/defaults.js";
-import { dbGetAllByIndex, dbPut, getDocumentWithBlocks } from "../shared/db.js";
+import { dbGetAllByIndex, dbPut, deleteQaTurnRecords, getDocumentWithBlocks } from "../shared/db.js";
 import { getSettings } from "../shared/store.js";
-import { generateGraphGreeting, generateKnowledgeReport } from "../shared/ai-client.js";
+import { generateGraphGreeting, generateKnowledgeReport, suggestEdgeRelation } from "../shared/ai-client.js";
 import { createKnowledgeReportSignature } from "../shared/knowledge-signature.js";
 import { markdownToBlocks } from "../shared/markdown.js";
 import { renderBlocks } from "../shared/block-renderer.js";
@@ -138,6 +138,7 @@ const elements = {
   edgePopoverMeta: document.querySelector("#edgePopoverMeta"),
   edgeRelationInput: document.querySelector("#edgeRelationInput"),
   edgeConfirmButton: document.querySelector("#edgeConfirmButton"),
+  edgeSuggestButton: document.querySelector("#edgeSuggestButton"),
   edgeReverseButton: document.querySelector("#edgeReverseButton"),
   edgeDeleteButton: document.querySelector("#edgeDeleteButton"),
   chatPanel: document.querySelector("#chatPanel"),
@@ -231,8 +232,45 @@ function bindNodeDetail() {
   });
 }
 
+/* 魔法棒：让模型给一个关系短语当起点，填进输入框，仍由读者确认后才保存 */
+async function handleSuggestRelation() {
+  const edge = state.edges.find((item) => item.id === state.selectedEdgeId);
+  if (!edge) {
+    return;
+  }
+
+  const nodesById = new Map(state.nodes.map((node) => [node.id, node]));
+  const button = elements.edgeSuggestButton;
+  button.disabled = true;
+  button.classList.add("busy");
+  try {
+    const result = await suggestEdgeRelation({
+      documentRecord: state.documentRecord,
+      fromNode: nodesById.get(edge.fromNodeId),
+      toNode: nodesById.get(edge.toNodeId),
+      aiSettings: state.settings?.ai
+    });
+    if (result?.ok && result.content) {
+      // 模型偶尔会带标点或多说一句，这里收一下并保持在 maxlength 之内
+      const phrase = String(result.content).replace(/\s+/g, " ").replace(/^["“”'']|["“”'']$/g, "").trim().slice(0, 40);
+      elements.edgeRelationInput.value = phrase;
+      elements.edgeRelationInput.focus();
+      elements.edgeRelationInput.select();
+      setStatus(result.demo ? "当前是 demo 模式，给的是占位短语。" : "这是 AI 的建议，可以改完再保存。");
+    } else {
+      setStatus(result?.error || "没能拿到关系建议。");
+    }
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : String(error));
+  } finally {
+    button.disabled = false;
+    button.classList.remove("busy");
+  }
+}
+
 function bindEdgePopover() {
   elements.edgeConfirmButton.addEventListener("click", handleSaveEdge);
+  elements.edgeSuggestButton.addEventListener("click", handleSuggestRelation);
   elements.edgeReverseButton.addEventListener("click", handleReverseEdge);
   elements.edgeDeleteButton.addEventListener("click", handleDeleteEdge);
   document.addEventListener("pointerdown", (event) => {
@@ -511,7 +549,17 @@ function renderEvidenceList() {
       .filter(Boolean)
       .join(" · ");
 
-    item.append(title, text, meta);
+    const actions = document.createElement("div");
+    actions.className = "evidence-item-actions";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "link-button evidence-item-delete";
+    remove.dataset.sourceKey = turn.sourceKey;
+    remove.textContent = "删除这轮对话";
+    remove.title = "把这一轮问答从阅读记录里删掉";
+    actions.append(remove);
+
+    item.append(title, text, meta, actions);
     elements.evidenceList.append(item);
   });
 }
@@ -543,7 +591,58 @@ async function handleEvidenceDrop(sourceKey, graphPoint) {
   setStatus("已放置切片。从卡片右侧圆点拖到另一张卡片就能建立关联。");
 }
 
+/*
+ * 删除一轮问答。不可逆，所以要点两次；第二次才真的删。
+ * 只删这一轮的问题、回答和它们的摘要，画布上已放置的切片保留（会变成孤立），
+ * 和「清空对话记录」的取舍一致。
+ */
+let armedEvidenceKey = "";
+let armedEvidenceTimer = 0;
+
+function disarmEvidenceDelete() {
+  window.clearTimeout(armedEvidenceTimer);
+  armedEvidenceTimer = 0;
+  armedEvidenceKey = "";
+  elements.evidenceList.querySelectorAll(".evidence-item-delete").forEach((button) => {
+    button.classList.remove("armed");
+    button.textContent = "删除这轮对话";
+  });
+}
+
+async function handleEvidenceDelete(sourceKey, button) {
+  if (armedEvidenceKey !== sourceKey) {
+    disarmEvidenceDelete();
+    armedEvidenceKey = sourceKey;
+    button.classList.add("armed");
+    button.textContent = "再点一次删除";
+    armedEvidenceTimer = window.setTimeout(disarmEvidenceDelete, 5000);
+    setStatus("再点一次会删掉这一轮问答；画布上已放置的切片会保留，变成孤立切片。");
+    return;
+  }
+
+  const turn = getAcceptedEvidence().find((item) => item.sourceKey === sourceKey);
+  disarmEvidenceDelete();
+  if (!turn) {
+    setStatus("这条记录已经不在了。");
+    return;
+  }
+
+  const summary = await deleteQaTurnRecords({
+    userMessageId: turn.userMessageId,
+    assistantMessageId: turn.sourceKey
+  });
+  await loadKnowledgeData({ preserveScroll: true });
+  setStatus(`已删除这一轮问答（${summary.messages} 条消息、${summary.summaries} 条摘要）。`);
+}
+
 function handleEvidenceClick(event) {
+  const deleteButton = event.target.closest?.(".evidence-item-delete");
+  if (deleteButton?.dataset.sourceKey) {
+    event.stopPropagation();
+    void handleEvidenceDelete(deleteButton.dataset.sourceKey, deleteButton);
+    return;
+  }
+
   const item = event.target.closest?.(".evidence-item");
   const sourceKey = item?.dataset.sourceKey;
   if (!sourceKey) {
@@ -670,37 +769,21 @@ async function handleTimelineLayout() {
   setStatus("已按提问顺序整理成时间线，同一条划线的追问排在同一行右侧。");
 }
 
-async function handleAddChatAnswerToGraph({ question, answer, model, focusNodeIds }) {
+/*
+ * 图谱问答的回答加进图谱时，只放一张新切片，不替读者连线。
+ * 以前会自动连到聚焦切片或最后一张上并标成「图谱追问」——那是系统替读者
+ * 断言了一层关系。关联由读者自己拉，和手动放置切片的规则保持一致。
+ */
+async function handleAddChatAnswerToGraph({ question, answer, model }) {
   pushUndoSnapshot();
-  const previousNodeIds = getLastNodeIdAsArray();
   const spot = findFreeSpot(getGraphNodes(), getViewportCenterPoint());
   const node = await createGraphQaNode({ documentId, question, answer, model, x: spot.x, y: spot.y });
   state.nodes = [...state.nodes, node];
-
-  const targets = focusNodeIds?.length ? focusNodeIds : previousNodeIds;
-  for (const targetId of targets) {
-    if (targetId === node.id) {
-      continue;
-    }
-    const edge = await createUserEdge({
-      documentId,
-      fromNodeId: targetId,
-      toNodeId: node.id,
-      relation: "图谱追问"
-    });
-    state.edges = [...state.edges, edge];
-  }
 
   renderGraph();
   renderEvidenceList();
   await refreshSummaryFreshness();
   return node;
-}
-
-function getLastNodeIdAsArray() {
-  const nodes = getGraphNodes();
-  const last = nodes[nodes.length - 1];
-  return last ? [last.id] : [];
 }
 
 /* ------------------------------------------------------------- node detail */
