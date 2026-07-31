@@ -575,18 +575,34 @@ textarea {
   overflow-x: hidden;
 }
 
+/* 改成 flex：按钮增减不再受固定列数约束（原来是三列栅格） */
 .qa-header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: 8px;
   margin: -2px 0 14px;
 }
 
+/* 清空对话：待确认状态要明显到不可能误点 */
+.qa-header button.armed {
+  width: auto;
+  padding: 0 9px;
+  border-color: #b42318;
+  background: #b42318;
+  color: #ffffff;
+  font-size: var(--app-xs-font-size);
+}
+
 .qa-header h2 {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.qa-header button {
+  flex: 0 0 auto;
 }
 
 .knowledge-button {
@@ -626,6 +642,16 @@ textarea {
 
 .message-list {
   gap: 10px;
+  /*
+   * 隐式列宽是 auto，会被最宽的子元素（长 token、代码块、模型名）撑出容器，
+   * 于是消息区出现横向滚动条并把文字截断。锁成可收缩的单列。
+   */
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.round,
+.round-main {
+  min-width: 0;
 }
 
 .document-list {
@@ -1185,34 +1211,27 @@ textarea {
   transform-origin: 0 0;
 }
 
+/*
+ * 原来画的是一条 0.36em 高、定位在 86% 的细条纹，本意是别遮住 canvas 上的字。
+ * 但 pdf.js 的文本层用替代字体整体横向缩放来匹配真实字宽，span 内部单个字符的
+ * 位置和渲染出的字形并不严格对应；一条细线会把这点漂移放大成「划错地方」。
+ * 半透明整块本身就带 alpha，字形照样透出来，观感也更像马克笔。
+ */
 .pdf-text-layer .reader-highlight {
   position: relative;
   z-index: 2;
   color: transparent;
-  background-color: transparent;
-  background-image: linear-gradient(
-    to bottom,
-    transparent 62%,
-    var(--pdf-highlight-bg) 62%,
-    var(--pdf-highlight-bg) 88%,
-    transparent 88%
-  );
-  background-position: 0 86%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.36em;
+  background-color: var(--pdf-highlight-bg);
+  background-image: none;
+  border-radius: 2px;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
   cursor: pointer;
 }
 
 .pdf-text-layer .reader-highlight-draft {
-  background-image: linear-gradient(
-    to bottom,
-    transparent 66%,
-    var(--pdf-highlight-draft-bg) 66%,
-    var(--pdf-highlight-draft-bg) 88%,
-    transparent 88%
-  );
+  background-color: var(--pdf-highlight-draft-bg);
+  background-image: none;
   text-decoration-line: underline;
   text-decoration-style: dotted;
   text-decoration-color: var(--highlight-draft-border);
@@ -1221,18 +1240,9 @@ textarea {
 }
 
 .pdf-text-layer .reader-highlight.active-highlight {
-  background-image:
-    linear-gradient(
-      to bottom,
-      transparent 56%,
-      var(--pdf-highlight-active-bg) 56%,
-      var(--pdf-highlight-active-bg) 90%,
-      transparent 90%
-    ),
-    linear-gradient(var(--highlight-active-border), var(--highlight-active-border));
-  background-position: 0 86%, 0 100%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.46em, 100% 2px;
+  background-color: var(--pdf-highlight-active-bg);
+  background-image: none;
+  box-shadow: 0 0 0 1px var(--highlight-active-border);
   text-decoration-line: none;
 }
 
@@ -1257,45 +1267,23 @@ textarea {
   color: var(--text);
 }
 
+/* 降级模式（文本层直接可见）同样改成整块，和上面保持一致 */
 .pdf-hybrid-page.pdf-text-visible-fallback .reader-highlight {
   color: var(--text);
-  background-color: transparent;
-  background-image: linear-gradient(
-    to bottom,
-    transparent 62%,
-    var(--highlight-bg) 62%,
-    var(--highlight-bg) 89%,
-    transparent 89%
-  );
-  background-position: 0 86%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.38em;
+  background-color: var(--highlight-bg);
+  background-image: none;
 }
 
 .pdf-hybrid-page.pdf-text-visible-fallback .reader-highlight-draft {
   color: var(--text);
-  background-image: linear-gradient(
-    to bottom,
-    transparent 66%,
-    var(--highlight-draft-bg) 66%,
-    var(--highlight-draft-bg) 88%,
-    transparent 88%
-  );
+  background-color: var(--highlight-draft-bg);
+  background-image: none;
 }
 
 .pdf-hybrid-page.pdf-text-visible-fallback .reader-highlight.active-highlight {
-  background-image:
-    linear-gradient(
-      to bottom,
-      transparent 56%,
-      var(--highlight-active-bg) 56%,
-      var(--highlight-active-bg) 90%,
-      transparent 90%
-    ),
-    linear-gradient(var(--highlight-active-border), var(--highlight-active-border));
-  background-position: 0 86%, 0 100%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.46em, 100% 2px;
+  background-color: var(--highlight-active-bg);
+  background-image: none;
+  box-shadow: 0 0 0 1px var(--highlight-active-border);
 }
 
 .reader-block {
@@ -1519,6 +1507,135 @@ figcaption {
 .active-thread,
 .thread-section {
   min-width: 0;
+}
+
+/* ---------- 联网查询：结果先列出来勾选，勾中的才会进 prompt ---------- */
+.web-search-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-raised);
+}
+
+.web-search-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+}
+
+.web-search-bar input {
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--control-border);
+  border-radius: 4px;
+  background: var(--panel-bg);
+  color: var(--text);
+  font-size: var(--app-small-font-size);
+}
+
+.web-search-bar button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: var(--app-xs-font-size);
+}
+
+.web-search-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--app-xs-font-size);
+  line-height: 1.5;
+}
+
+.web-search-results {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.web-search-result {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-bg);
+  cursor: pointer;
+}
+
+.web-search-result:hover {
+  border-color: var(--control-border);
+}
+
+.web-search-result-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.web-search-result-title {
+  color: var(--text);
+  font-size: var(--app-small-font-size);
+  font-weight: 650;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.web-search-result-meta {
+  color: var(--muted);
+  font-size: var(--app-xs-font-size);
+  overflow-wrap: anywhere;
+}
+
+.web-search-result-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--muted-strong);
+  font-size: var(--app-xs-font-size);
+  line-height: 1.5;
+}
+
+.web-context-chip .selection-chip {
+  max-width: 150px;
+}
+
+/* 某一轮当时带过的联网来源 */
+.round-web-sources {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.round-web-lead {
+  color: var(--muted);
+  font-size: var(--app-xs-font-size);
+}
+
+.round-web-source {
+  max-width: 100%;
+  padding: 1px 7px;
+  border: 1px solid var(--control-border);
+  border-radius: 999px;
+  color: var(--muted-strong);
+  font-size: var(--app-xs-font-size);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.round-web-source:hover {
+  border-color: var(--selection-marker);
+  color: var(--text);
 }
 
 /* ---------- 划线小气泡：贴在输入框上方，hover 看原文 ---------- */
@@ -1882,13 +1999,6 @@ figcaption {
 }
 
 /* ---------- 链式轮次：左侧 22px 轨道兼作路径图例 ---------- */
-.path-summary {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: var(--app-xs-font-size);
-  white-space: nowrap;
-}
-
 .message-list.round-list {
   gap: 0;
 }
@@ -2025,6 +2135,34 @@ figcaption {
 
 .round {
   padding-bottom: 14px;
+}
+
+/* 这一轮带的划线原文，跟着这一轮显示，而不是挂在面板顶部 */
+.round-quote {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  /* 全局 button 规则是 nowrap，引用原文必须换行，否则会把整列撑宽 */
+  white-space: normal;
+  margin-bottom: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--selection-border);
+  border-left: 3px solid var(--selection-marker);
+  border-radius: 4px;
+  background: var(--selection-bg);
+  color: var(--muted-strong);
+  font-size: var(--app-xs-font-size);
+  line-height: 1.6;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.round-quote:hover {
+  color: var(--text);
+  box-shadow: none;
+  transform: none;
 }
 
 .round-question {

@@ -182,6 +182,58 @@ export async function deletePendingPdfImport(importId) {
   return dbDelete("pendingPdfImports", importId);
 }
 
+/*
+ * 清空一个文档的对话记录：划线、thread、消息、摘要、AI 运行日志。
+ * 故意不动 graphNodes / graphEdges / graphChatMessages —— 那是读者手工策展的
+ * 知识图谱，清对话不该顺手毁掉它。失去来源的切片会被 reconcileGraph 标成孤立。
+ */
+export async function clearDocumentConversation(documentId) {
+  const db = await openReaderDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(["highlights", "threads", "messages", "summaries", "aiRuns"], "readwrite");
+    const highlightStore = tx.objectStore("highlights");
+    const threadStore = tx.objectStore("threads");
+    const messageStore = tx.objectStore("messages");
+    const summaryStore = tx.objectStore("summaries");
+    const aiRunStore = tx.objectStore("aiRuns");
+    const summary = { documentId, highlights: 0, threads: 0, messages: 0, summaries: 0, aiRuns: 0 };
+
+    deleteKeysByIndex(highlightStore, "by_documentId", documentId, (count) => {
+      summary.highlights = count;
+    });
+    deleteKeysByIndex(summaryStore, "by_documentId", documentId, (count) => {
+      summary.summaries += count;
+    });
+
+    const threadsRequest = threadStore.index("by_documentId").getAll(documentId);
+    threadsRequest.onsuccess = () => {
+      const threads = threadsRequest.result || [];
+      summary.threads = threads.length;
+      for (const thread of threads) {
+        const threadId = thread?.id;
+        if (!threadId) {
+          continue;
+        }
+        deleteKeysByIndex(messageStore, "by_threadId", threadId, (count) => {
+          summary.messages += count;
+        });
+        deleteKeysByIndex(summaryStore, "by_threadId", threadId, (count) => {
+          summary.summaries += count;
+        });
+        deleteKeysByIndex(aiRunStore, "by_threadId", threadId, (count) => {
+          summary.aiRuns += count;
+        });
+        threadStore.delete(threadId);
+      }
+    };
+    threadsRequest.onerror = () => tx.abort();
+
+    tx.oncomplete = () => resolve(summary);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
 export async function deleteDocumentReadingHistory(documentId) {
   const db = await openReaderDb();
   return new Promise((resolve, reject) => {

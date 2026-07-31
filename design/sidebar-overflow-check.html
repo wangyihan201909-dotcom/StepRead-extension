@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>StepRead · 侧栏横向溢出检查</title>
+    <link id="readerCss" rel="stylesheet" href="../src/reader/reader.css">
+    <script>
+      document.getElementById("readerCss").href = `../src/reader/reader.css?t=${Date.now()}`;
+    </script>
+    <style>
+      body { margin: 0; display: flex; height: 100vh; }
+      .fake-doc { flex: 1 1 auto; background: var(--page-bg); }
+      .qa-panel { flex: 0 0 430px; }
+    </style>
+  </head>
+  <body>
+    <div class="fake-doc"></div>
+    <aside class="qa-panel">
+      <header class="qa-header">
+        <h2>对话</h2>
+        <button id="clearBtn" class="icon-button" type="button" title="清空这份文档的对话记录">🗑</button>
+        <button type="button" class="secondary knowledge-button">知识图谱</button>
+      </header>
+      <section class="qa-layer qa-detail">
+        <div class="detail-body">
+          <div class="message-list chat-list round-list" id="rounds"></div>
+          <aside class="path-rail" id="rail">
+            <div class="path-rail-head">
+              <button class="path-rail-button" type="button">⤢</button>
+            </div>
+            <div class="path-rail-scroll"><div class="path-rail-inner"><svg></svg></div></div>
+          </aside>
+        </div>
+        <footer class="composer">
+          <div class="selection-chips" hidden></div>
+          <div class="composer-row">
+            <textarea rows="3" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
+            <button type="button">发送</button>
+          </div>
+        </footer>
+      </section>
+    </aside>
+
+    <script>
+      // 专挑最容易把栅格列撑宽的内容
+      const ROUNDS = [
+        {
+          quote: "本节的模型既没有循环层，也没有卷积层，因此顺序信息必须由外部显式补进来。",
+          q: "如果说责任的分布是不均的，那么能力的可数据化是否如乐观者所设想的那样成立？",
+          a: "文章给出的回答是不能。它随后直接点明，信任的成本并不是用来降低交易成本的，而是用来弥补契约本身无法完备的缺陷。",
+          model: "DEEPSEEK-V4-PRO"
+        },
+        {
+          q: "超长不可断 token 压力测试",
+          a: "下面这个词故意不留断点：",
+          model: "DEEPSEEK-V4-PRO",
+          unbreakable: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        {
+          q: "代码块压力测试",
+          a: "带一段很长的单行代码：",
+          model: "DEEPSEEK-V4-PRO",
+          code: "const veryLongIdentifierThatShouldNotStretchTheColumn = someFunction(argumentOne, argumentTwo, argumentThree);"
+        }
+      ];
+
+      const host = document.getElementById("rounds");
+      ROUNDS.forEach((r, i) => {
+        const article = document.createElement("article");
+        article.className = "round";
+        if (i === ROUNDS.length - 1) article.classList.add("round-last", "round-current");
+
+        const main = document.createElement("div");
+        main.className = "round-main";
+
+        if (r.quote) {
+          const quote = document.createElement("button");
+          quote.type = "button";
+          quote.className = "round-quote";
+          quote.textContent = r.quote;
+          main.append(quote);
+        }
+
+        const qRow = document.createElement("div");
+        qRow.className = "round-question";
+        const bubble = document.createElement("p");
+        bubble.textContent = r.q;
+        qRow.append(bubble);
+
+        const answer = document.createElement("div");
+        answer.className = "round-answer";
+        const card = document.createElement("div");
+        card.className = "message message-assistant";
+        const role = document.createElement("span");
+        role.className = "message-role";
+        role.textContent = r.model;
+        const content = document.createElement("div");
+        content.className = "message-content";
+        const p = document.createElement("p");
+        p.className = "message-paragraph";
+        p.textContent = r.a + (r.unbreakable ? r.unbreakable : "");
+        content.append(p);
+        if (r.code) {
+          const pre = document.createElement("pre");
+          pre.className = "message-code-block";
+          pre.textContent = r.code;
+          content.append(pre);
+        }
+        card.append(role, content);
+        answer.append(card);
+
+        const tools = document.createElement("div");
+        tools.className = "round-tools";
+        const tag = document.createElement("span");
+        tag.className = "round-tag";
+        tag.textContent = `第 ${i + 1} 轮`;
+        tools.append(tag);
+
+        const acceptRow = document.createElement("div");
+        acceptRow.className = "graph-accept-row";
+        const accept = document.createElement("button");
+        accept.type = "button";
+        accept.className = "secondary round-mini-button graph-accept-button";
+        accept.textContent = "＋ 加入知识图谱";
+        acceptRow.append(accept);
+
+        main.append(qRow, answer, tools, acceptRow);
+        article.append(main);
+        host.append(article);
+      });
+    </script>
+  </body>
+</html>

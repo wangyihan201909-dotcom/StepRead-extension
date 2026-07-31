@@ -11,6 +11,10 @@ const baseUrl = document.querySelector("#baseUrl");
 const apiKey = document.querySelector("#apiKey");
 const model = document.querySelector("#model");
 const demoMode = document.querySelector("#demoMode");
+const webSearchEnabled = document.querySelector("#webSearchEnabled");
+const webSearchProvider = document.querySelector("#webSearchProvider");
+const webSearchApiKey = document.querySelector("#webSearchApiKey");
+const webSearchMaxResults = document.querySelector("#webSearchMaxResults");
 const systemPrompt = document.querySelector("#systemPrompt");
 const selectionPrompt = document.querySelector("#selectionPrompt");
 const fontFamily = document.querySelector("#fontFamily");
@@ -139,6 +143,12 @@ form.addEventListener("submit", async (event) => {
       apiKey: apiKey.value.trim(),
       model: model.value.trim(),
       demoMode: demoMode.checked,
+      webSearch: {
+        enabled: webSearchEnabled.checked,
+        provider: webSearchProvider.value,
+        apiKey: webSearchApiKey.value.trim(),
+        maxResults: clampSearchResults(webSearchMaxResults.value)
+      },
       context: aiContext,
       systemPrompt: systemPrompt.value,
       selectionPrompt: selectionPrompt.value
@@ -208,6 +218,11 @@ function renderSettings(settings) {
   apiKey.value = ai.apiKey;
   model.value = ai.model;
   demoMode.checked = Boolean(ai.demoMode);
+  const webSearch = { ...DEFAULT_SETTINGS.ai.webSearch, ...(ai.webSearch || {}) };
+  webSearchEnabled.checked = Boolean(webSearch.enabled);
+  webSearchProvider.value = webSearch.provider || DEFAULT_SETTINGS.ai.webSearch.provider;
+  webSearchApiKey.value = webSearch.apiKey || "";
+  webSearchMaxResults.value = String(clampSearchResults(webSearch.maxResults));
   systemPrompt.value = ai.systemPrompt;
   selectionPrompt.value = ai.selectionPrompt;
   renderAiContextSettings(aiContext);
@@ -774,4 +789,12 @@ function formatTime(date) {
     minute: "2-digit",
     second: "2-digit"
   }).format(date);
+}
+
+function clampSearchResults(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_SETTINGS.ai.webSearch.maxResults;
+  }
+  return Math.min(Math.max(Math.trunc(parsed), 1), 10);
 }

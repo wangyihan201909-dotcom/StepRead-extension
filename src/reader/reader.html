@@ -81,18 +81,11 @@
 
         <aside class="qa-panel" aria-label="问答面板">
           <header class="qa-header">
-            <button id="panelToggleButton" class="icon-button" type="button" title="查看历史划线">◀</button>
-            <h2 id="qaPanelTitle">划线问答</h2>
-            <span id="pathSummary" class="path-summary"></span>
-            <button id="newThreadButton" class="icon-button" type="button" title="开始一条新对话">＋</button>
+            <h2 id="qaPanelTitle">对话</h2>
+            <button id="webSearchToggleButton" class="icon-button" type="button" title="联网查询：搜到的结果由你勾选后才会带进提问">🌐</button>
+            <button id="clearConversationButton" class="icon-button" type="button" title="清空这份文档的对话记录">🗑</button>
             <button id="knowledgeButton" type="button" class="secondary knowledge-button">知识图谱</button>
           </header>
-
-          <section id="historyLayer" class="qa-layer" hidden>
-            <section class="thread-section">
-              <div id="threadList" class="thread-list"></div>
-            </section>
-          </section>
 
           <section id="detailLayer" class="qa-layer qa-detail">
             <div class="detail-body">
@@ -111,6 +104,15 @@
             </div>
 
             <footer class="composer">
+              <div id="webSearchPanel" class="web-search-panel" hidden>
+                <div class="web-search-bar">
+                  <input id="webSearchInput" type="text" placeholder="搜什么？默认用你输入框里的问题" autocomplete="off">
+                  <button id="webSearchRunButton" type="button">搜索</button>
+                  <button id="webSearchCloseButton" type="button" class="secondary" title="收起">×</button>
+                </div>
+                <p id="webSearchStatus" class="web-search-status">勾选要带进这一问的结果；没勾的不会发给模型。</p>
+                <div id="webSearchResults" class="web-search-results"></div>
+              </div>
               <div id="selectionChips" class="selection-chips" hidden></div>
               <div class="composer-row">
                 <textarea id="questionInput" rows="3" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>

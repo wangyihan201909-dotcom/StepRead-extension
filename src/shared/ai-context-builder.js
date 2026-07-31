@@ -76,6 +76,7 @@ export function buildThreadContext({
   messagesByThread = {},
   summaries = [],
   question = "",
+  webResults = [],
   options = {}
 } = {}) {
   /*
@@ -98,6 +99,7 @@ export function buildThreadContext({
     threads,
     messagesByThread,
     summaries,
+    webResults,
     options: contextOptions
   });
   const title = getDocumentTitle(documentRecord, documentTitle);
@@ -184,6 +186,11 @@ export function buildThreadContext({
       priority: "5"
     });
   }
+  // 联网结果：读者逐条勾选过才会到这里，来源必须留在包里以便回答时标明出处
+  text = appendOptionalSection(text, "web.search_results", formatWebResults(webResults), {
+    role: "external_web_evidence",
+    priority: "6"
+  });
   text = appendSection(text, "context.answer_contract", getThreadAnswerContract(), { role: "output_contract" });
   text = wrapContextPackage("question_answer", text);
 
@@ -368,6 +375,7 @@ export function buildHighlightContextParts({
   threads = [],
   messagesByThread = {},
   summaries = [],
+  webResults = [],
   options = {}
 } = {}) {
   const contextOptions = resolveContextOptions(options, DEFAULT_THREAD_CONTEXT_OPTIONS);
@@ -430,7 +438,8 @@ export function buildHighlightContextParts({
     highlights,
     threads,
     messagesByThread,
-    summaries
+    summaries,
+    webResults
   });
 
   return {
@@ -767,6 +776,22 @@ function formatSectionSummaries(summaries) {
         normalizeContextText(body)
       ].filter(Boolean).join("\n");
     })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function formatWebResults(results) {
+  return (results || [])
+    .map((result, index) =>
+      [
+        `[web_result index="${index + 1}" title="${escapeAttribute(result?.title || "")}" url="${escapeAttribute(
+          result?.url || ""
+        )}"]`,
+        normalizeContextText(result?.snippet || "")
+      ]
+        .filter(Boolean)
+        .join("\n")
+    )
     .filter(Boolean)
     .join("\n\n");
 }

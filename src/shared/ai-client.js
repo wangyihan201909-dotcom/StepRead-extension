@@ -67,6 +67,7 @@ export async function answerThread({
   threads = [],
   messagesByThread = {},
   question,
+  webResults = [],
   documentRecord,
   documentTitle,
   aiSettings: providedAiSettings,
@@ -87,6 +88,7 @@ export async function answerThread({
     threads,
     messagesByThread,
     question,
+    webResults,
     options: resolveThreadContextOptions(aiSettings)
   });
   const prompt = buildSelectionPrompt(

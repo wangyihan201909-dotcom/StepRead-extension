@@ -53,6 +53,35 @@
                   <small>开启时不调用真实 API，只返回本地模拟答案。</small>
                 </span>
               </label>
+
+              <label class="checkbox-with-note">
+                <input id="webSearchEnabled" name="webSearchEnabled" type="checkbox">
+                <span>
+                  <strong>启用联网查询</strong>
+                  <small>搜到的结果不会自动进入提问；阅读器里会先列出来由你勾选，勾中的才发给模型。</small>
+                </span>
+              </label>
+
+              <label>
+                <span>搜索服务</span>
+                <small>与模型服务无关的独立服务，因为 OpenAI 兼容协议里没有统一的联网搜索。</small>
+                <select id="webSearchProvider" name="webSearchProvider">
+                  <option value="tavily">Tavily</option>
+                  <option value="brave">Brave Search</option>
+                </select>
+              </label>
+
+              <label>
+                <span>搜索服务密钥</span>
+                <small>只保存到本机浏览器扩展存储；留空时联网查询只会返回一条占位结果。</small>
+                <input id="webSearchApiKey" name="webSearchApiKey" type="password" autocomplete="off" placeholder="tvly-... / BSA...">
+              </label>
+
+              <label>
+                <span>每次返回结果数</span>
+                <small>1 到 10 之间。结果越多，你要过目的东西越多。</small>
+                <input id="webSearchMaxResults" name="webSearchMaxResults" type="number" min="1" max="10" step="1">
+              </label>
             </div>
 
             <div class="prompt-grid">

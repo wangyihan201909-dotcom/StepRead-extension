@@ -29,3 +29,6 @@ coverage/
 *key*
 *secret*
 *token*
+
+# 本地开发配置（浏览器预览等），不属于扩展产物
+.claude/
