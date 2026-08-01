@@ -211,7 +211,8 @@ function bindToolbar() {
 }
 
 function bindSummaryPanel() {
-  elements.summaryToggle.addEventListener("click", () => setSummaryCollapsed(!state.summaryCollapsed));
+  // 摘要现在是 <details>，展开与否以它自己的 open 为准
+  elements.summaryBody.addEventListener("toggle", () => setSummaryCollapsed(!elements.summaryBody.open));
   elements.regenerateButton.addEventListener("click", handleGenerateReport);
   elements.staleRegenerateButton.addEventListener("click", handleGenerateReport);
   elements.userPrompt.addEventListener("input", () => void refreshSummaryFreshness());
@@ -1196,8 +1197,9 @@ function persistUiState() {
 
 function applyUiState() {
   elements.summaryPanel.dataset.collapsed = String(state.summaryCollapsed);
-  elements.summaryToggle.setAttribute("aria-expanded", String(!state.summaryCollapsed));
-  elements.summaryToggle.title = state.summaryCollapsed ? "展开摘要" : "收起摘要";
+  if (elements.summaryBody.open === state.summaryCollapsed) {
+    elements.summaryBody.open = !state.summaryCollapsed;
+  }
   elements.chatPanel.dataset.collapsed = String(state.chatCollapsed);
   elements.chatCollapseButton.setAttribute("aria-expanded", String(!state.chatCollapsed));
   elements.chatCollapseButton.title = state.chatCollapsed ? "展开问答窗口" : "收起问答窗口";

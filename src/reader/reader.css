@@ -1973,6 +1973,38 @@ figcaption {
   gap: 8px;
 }
 
+.composer-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+}
+
+/* 语音输入：录音时要一眼看出来还在听 */
+.voice-button {
+  width: auto;
+  min-width: 68px;
+  min-height: 30px;
+}
+
+.voice-button.recording {
+  border-color: #b42318;
+  background: #b42318;
+  color: #ffffff;
+  animation: voice-recording-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes voice-recording-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-button.recording {
+    animation: none;
+  }
+}
+
 .composer.branching textarea {
   border-color: var(--selection-border);
 }

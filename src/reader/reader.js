@@ -27,7 +27,7 @@ import {
   normalizePdfSourceUrl
 } from "../shared/paper-deepreport-adapter.js";
 import { getSettings, saveSettings } from "../shared/store.js";
-import { searchWeb } from "../shared/web-search.js";
+import { isWebSearchReady, searchWeb } from "../shared/web-search.js";
 
 const KNOWLEDGE_REFRESH_KEY = "knowledgeRefreshSignal";
 const PDFJS_VERSION = "1.10.100";
@@ -150,6 +150,7 @@ const elements = {
   composer: document.querySelector(".composer"),
   questionInput: document.querySelector("#questionInput"),
   sendQuestionButton: document.querySelector("#sendQuestionButton"),
+  voiceInputButton: document.querySelector("#voiceInputButton"),
   pathRail: document.querySelector("#pathRail"),
   pathRailScroll: document.querySelector("#pathRailScroll"),
   pathRailInner: document.querySelector("#pathRailInner"),
@@ -172,6 +173,7 @@ const FORK_PIP_LIMIT = 5;
 const forkBadgeMemory = new Map();
 let branchPopElement = null;
 let pathCanvasPanning = null;
+let voiceRecognition = null;
 
 let readerLocationUpdateFrame = 0;
 let pdfZoomRerenderTimer = 0;
@@ -407,6 +409,7 @@ function bindEvents() {
     }
   });
   elements.sendQuestionButton.addEventListener("click", handleQuestionButtonClick);
+  elements.voiceInputButton.addEventListener("click", toggleVoiceInput);
   elements.messageList.addEventListener("click", handleMessageListClick);
   elements.pathCanvasButton.addEventListener("click", openPathCanvas);
   document.querySelector("#pathCanvasClose").addEventListener("click", closePathCanvas);
@@ -6695,6 +6698,13 @@ async function sendQuestion(options = {}) {
   const settingsAtQuestion = await getSettings();
   const aiSettingsAtQuestion = { ...(settingsAtQuestion.ai || {}) };
   const modelAtQuestion = aiSettingsAtQuestion.model || "当前模型";
+  /*
+   * 联网查询开着就直接用这个问题去搜，搜到的全部带上，不再要求逐条勾选。
+   * 手动勾过的优先：🌐 面板仍然可以先搜先挑，那种情况下不再自动覆盖。
+   * 结果依旧会显示在这一轮下面，来源可点，所以「带了什么」仍然看得见。
+   */
+  const webContext = await resolveWebContextForQuestion(question, aiSettingsAtQuestion);
+
   // 以发送这一刻的当前轮作为父轮：当前轮已经有后续时，这里就自然分出一条支线
   // 父轮要在整条对话里算，否则分支会挂错
   const treeBeforeQuestion = buildRounds(await getDocumentMessages());
@@ -6704,7 +6714,7 @@ async function sendQuestion(options = {}) {
     model: modelAtQuestion,
     existingUserMessage: options.userMessage,
     parentId: parentRoundId,
-    webContext: state.webContextItems
+    webContext
   });
   state.activeRoundId = userMessage.id;
   const answerRun = {
@@ -6718,7 +6728,7 @@ async function sendQuestion(options = {}) {
     userMessage,
     thread: { ...state.activeThread },
     highlight: state.activeHighlight ? { ...state.activeHighlight } : null,
-    webResults: [...state.webContextItems],
+    webResults: [...webContext],
     documentRecord: { ...state.currentDocument },
     blocks: [...state.blocks],
     highlights: [...state.highlights],
@@ -7355,7 +7365,125 @@ function buildWebContextChip(item) {
   return wrap;
 }
 
-/* ---------- 联网查询：搜到的结果先给读者勾，勾中的才进 prompt ---------- */
+/* ---------- 语音输入：识别结果直接落进输入框，发送与否仍由读者决定 ---------- */
+
+function getSpeechRecognitionCtor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function stopVoiceInput() {
+  if (!voiceRecognition) {
+    return;
+  }
+  const recognition = voiceRecognition;
+  voiceRecognition = null;
+  try {
+    recognition.stop();
+  } catch (error) {
+    // 已经停了就算了
+  }
+  elements.voiceInputButton.classList.remove("recording");
+  elements.voiceInputButton.title = "语音输入";
+}
+
+function toggleVoiceInput() {
+  if (voiceRecognition) {
+    stopVoiceInput();
+    setStatus("已停止语音输入。");
+    return;
+  }
+
+  const Recognition = getSpeechRecognitionCtor();
+  if (!Recognition) {
+    setStatus("这个浏览器不支持语音识别（需要 Chrome 的 Web Speech API）。");
+    return;
+  }
+
+  const recognition = new Recognition();
+  recognition.lang = "zh-CN";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+
+  // 开始录之前先记住已有文字，识别结果追加在后面，不覆盖你打了一半的内容
+  const baseText = elements.questionInput.value;
+  let finalText = "";
+
+  recognition.onresult = (event) => {
+    let interim = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const result = event.results[index];
+      if (result.isFinal) {
+        finalText += result[0].transcript;
+      } else {
+        interim += result[0].transcript;
+      }
+    }
+    elements.questionInput.value = `${baseText}${finalText}${interim}`;
+    updateSendState();
+  };
+
+  recognition.onerror = (event) => {
+    const reason =
+      event.error === "not-allowed" || event.error === "service-not-allowed"
+        ? "麦克风权限被拒绝，请在地址栏的站点权限里允许麦克风。"
+        : `语音识别出错：${event.error}`;
+    stopVoiceInput();
+    setStatus(reason);
+  };
+
+  recognition.onend = () => {
+    // 可能是自动结束，也可能是我们主动停的；两种都要把按钮状态恢复
+    if (voiceRecognition === recognition) {
+      stopVoiceInput();
+    }
+    updateSendState();
+  };
+
+  try {
+    recognition.start();
+  } catch (error) {
+    setStatus(`没能启动语音输入：${getErrorMessage(error)}`);
+    return;
+  }
+
+  voiceRecognition = recognition;
+  elements.voiceInputButton.classList.add("recording");
+  elements.voiceInputButton.title = "停止语音输入";
+  setStatus("正在听…再点一次麦克风结束。识别结果会落进输入框，发送与否由你决定。");
+}
+
+/*
+ * 这一问要带哪些联网结果：
+ * 手动勾过就用勾的那些；否则联网查询开着就直接拿问题去搜，全部带上。
+ * 搜索失败不拦提问，只在状态栏说明，这一问退回成纯文档提问。
+ */
+async function resolveWebContextForQuestion(question, aiSettings) {
+  if (state.webContextItems.length) {
+    return [...state.webContextItems];
+  }
+  if (!isWebSearchReady(aiSettings)) {
+    return [];
+  }
+
+  setStatus("正在联网查询…");
+  try {
+    const results = await searchWeb({ query: question, aiSettings });
+    if (results.length) {
+      setStatus(`已带上 ${results.length} 条联网结果，来源显示在这一轮下面。`);
+    }
+    await logTask("web.search.auto", {
+      documentId: state.currentDocument?.id || "",
+      provider: aiSettings?.webSearch?.provider || "",
+      results: results.length
+    });
+    return results;
+  } catch (error) {
+    setStatus(`联网查询失败，这一问只用文档内容回答：${getErrorMessage(error)}`);
+    return [];
+  }
+}
+
+/* ---------- 联网查询面板：想自己挑的时候用，勾过的优先于自动检索 ---------- */
 
 function toggleWebSearchPanel() {
   const willOpen = elements.webSearchPanel.hidden;
