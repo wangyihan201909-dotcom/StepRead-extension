@@ -27,7 +27,8 @@ import {
   normalizePdfSourceUrl
 } from "../shared/paper-deepreport-adapter.js";
 import { getSettings, saveSettings } from "../shared/store.js";
-import { isWebSearchReady, searchWeb } from "../shared/web-search.js";
+import { buildDocumentOutline } from "../shared/context-capabilities.js";
+import { getWebSearchSettings, isWebSearchReady, searchWeb } from "../shared/web-search.js";
 
 const KNOWLEDGE_REFRESH_KEY = "knowledgeRefreshSignal";
 const PDFJS_VERSION = "1.10.100";
@@ -226,6 +227,7 @@ async function init() {
   applyLayoutState();
   renderSourceUrl();
   await restoreWebSearchToggle();
+  watchWebSearchSetting();
   if (state.shouldResetData) {
     await resetLocalReaderDataForManualVerification({
       resetSettings: state.resetDataMode === "all"
@@ -7394,24 +7396,96 @@ function toggleVoiceInput() {
  * 联网开关关着就一条都不带；开着就直接拿这个问题去搜，搜到的全部带上。
  * 搜索失败不拦提问，只在状态栏说明，这一问退回成纯文档提问。
  */
+/*
+ * 只把问题原样丢给搜索引擎是搜不准的：「主体性的极化是什么意思」这类问法
+ * 本身不含任何主题，引擎只能瞎猜，搜回来的东西自然和正在读的文档无关。
+ * 查询词要补上读者当下的位置：文档主题、划线所在章节、划线原文。
+ */
+const JUNK_DOCUMENT_TITLES = /^(about:blank|untitled|new tab|新标签页|未命名|document)$/i;
+const WEB_QUERY_MAX_CHARS = 200;
+const WEB_QUERY_QUESTION_CHARS = 120;
+const WEB_QUERY_PART_CHARS = 50;
+
+function trimForQuery(text, limit) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  return clean.length > limit ? clean.slice(0, limit).trim() : clean;
+}
+
+/* 文档记录的 title 常常是文件名、甚至 about:blank；正文自己的大标题才是主题 */
+function getDocumentTopicForSearch() {
+  const outline = buildDocumentOutline(state.blocks || [], state.currentDocument);
+  const top = outline.reduce(
+    (best, item) => (item.title && (!best || item.level < best.level) ? item : best),
+    null
+  );
+  if (top?.title) {
+    return top.title;
+  }
+  const recordTitle = String(state.currentDocument?.title || "")
+    .replace(/\.(pdf|epub|html?|txt|md)$/i, "")
+    .trim();
+  return JUNK_DOCUMENT_TITLES.test(recordTitle) ? "" : recordTitle;
+}
+
+/* 划线落在哪一章就取那一章的标题；没划线时没有位置可言，返回空 */
+function getChapterTitleForSearch(highlight) {
+  const order = Number(highlight?.blockRanges?.[0]?.blockOrder);
+  if (!Number.isFinite(order)) {
+    return "";
+  }
+  const outline = buildDocumentOutline(state.blocks || [], state.currentDocument);
+  let current = "";
+  for (const item of outline) {
+    if (Number(item.order) > order) {
+      break;
+    }
+    current = item.title || current;
+  }
+  return current;
+}
+
+function buildWebSearchQuery(question) {
+  const asked = trimForQuery(question, WEB_QUERY_QUESTION_CHARS);
+  const highlight = state.activeHighlight;
+  const parts = [];
+  const add = (value) => {
+    const text = trimForQuery(value, WEB_QUERY_PART_CHARS);
+    // 问题里已经说过的不再重复，否则查询词很快被挤满
+    if (text && !asked.includes(text) && !parts.includes(text)) {
+      parts.push(text);
+    }
+  };
+
+  add(getDocumentTopicForSearch());
+  add(getChapterTitleForSearch(highlight));
+  add(highlight?.text);
+
+  // 问题放最前面：超长时被截掉的是补充语境，不是读者真正问的那句
+  return trimForQuery([asked, ...parts].join(" "), WEB_QUERY_MAX_CHARS);
+}
+
 async function resolveWebContextForQuestion(question, aiSettings) {
-  if (!state.webSearchEnabled) {
+  // 判定完全依据设置本身，state 只用来画按钮，避免两边漂移
+  const webSearch = getWebSearchSettings(aiSettings);
+  if (!webSearch.enabled) {
     return [];
   }
-  if (!isWebSearchReady(aiSettings)) {
+  if (!webSearch.apiKey) {
     setStatus("联网查询还没配好：去设置里填搜索服务和密钥，这一问先只用文档内容回答。");
     return [];
   }
 
+  const query = buildWebSearchQuery(question);
   setStatus("正在联网查询…");
   try {
-    const results = await searchWeb({ query: question, aiSettings });
+    const results = await searchWeb({ query, aiSettings });
     if (results.length) {
       setStatus(`已带上 ${results.length} 条联网结果，来源显示在这一轮下面。`);
     }
     await logTask("web.search.auto", {
       documentId: state.currentDocument?.id || "",
       provider: aiSettings?.webSearch?.provider || "",
+      query,
       results: results.length
     });
     return results;
@@ -7423,11 +7497,46 @@ async function resolveWebContextForQuestion(question, aiSettings) {
 
 /* ---------- 联网查询开关：开着就每次提问自动检索，不再手动搜再挑 ---------- */
 
-/* 开关是读者的长期偏好，不是一次性的；关掉浏览器再打开也该保持原样 */
+/*
+ * 开关只有一处真值：settings.ai.webSearch.enabled —— 设置页写的就是这个。
+ * 以前阅读器另存 reader.webSearchEnabled，于是小按钮显示「开」而设置页是「关」，
+ * 提问时按设置页判定，就成了「明明开着却不检索」。
+ */
 async function restoreWebSearchToggle() {
   const settings = await getSettings();
-  state.webSearchEnabled = Boolean(settings.reader?.webSearchEnabled);
+  let enabled = Boolean(settings.ai?.webSearch?.enabled);
+
+  // 旧版本把开关存在 reader 下：迁移一次，之后这个字段永远是 false
+  if (!enabled && settings.reader?.webSearchEnabled) {
+    enabled = true;
+    await saveSettings({
+      ...settings,
+      ai: { ...settings.ai, webSearch: { ...settings.ai?.webSearch, enabled: true } },
+      reader: { ...settings.reader, webSearchEnabled: false }
+    });
+  }
+
+  state.webSearchEnabled = enabled;
   renderWebSearchToggle();
+}
+
+/* 设置页改了开关，已经开着的阅读器要跟着变，否则又是两处各说各话 */
+function watchWebSearchSetting() {
+  const storage = globalThis.chrome?.storage;
+  if (!storage?.onChanged) {
+    return;
+  }
+  storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local" || !changes.settings) {
+      return;
+    }
+    const next = Boolean(changes.settings.newValue?.ai?.webSearch?.enabled);
+    if (next === state.webSearchEnabled) {
+      return;
+    }
+    state.webSearchEnabled = next;
+    renderWebSearchToggle();
+  });
 }
 
 async function toggleWebSearchEnabled() {
@@ -7438,7 +7547,7 @@ async function toggleWebSearchEnabled() {
   const settings = await getSettings();
   await saveSettings({
     ...settings,
-    reader: { ...settings.reader, webSearchEnabled: next }
+    ai: { ...settings.ai, webSearch: { ...settings.ai?.webSearch, enabled: next } }
   });
 
   if (!next) {
