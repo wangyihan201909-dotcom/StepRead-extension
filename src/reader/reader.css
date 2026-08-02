@@ -440,7 +440,7 @@ textarea {
 /* 收起后这是唯一的回来入口，所以始终可见，不跟着 hover 淡出 */
 .reader-app.sidebar-collapsed .sidebar-collapse-button {
   top: 50%;
-  left: 6px;
+  left: 0;
   transform: translateY(-50%);
   opacity: 1;
   pointer-events: auto;
@@ -484,19 +484,22 @@ textarea {
 .sidebar-collapse-button {
   position: absolute;
   top: 50%;
-  /* 骑在侧边栏的右边框上（分隔条的左沿），而不是浮在分隔条正中 */
+  /*
+   * 从侧边栏右边框上长出来的一片小标签：左侧平齐边框、只有伸出去的一侧是圆的。
+   * 做成整颗胶囊就变回「浮在边框上的一个物件」，不是吸附。
+   */
   left: 0;
-  width: 15px;
-  min-height: 46px;
+  width: 13px;
+  min-height: 44px;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
   background: var(--panel-muted);
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1;
-  transform: translate(-50%, -50%);
+  transform: translateY(-50%);
   cursor: pointer;
   opacity: 0.5;
   box-shadow: none;
