@@ -20,6 +20,9 @@
   --app-title-font-size: calc(var(--app-font-size) * 1.45);
   --app-section-title-font-size: calc(var(--app-font-size) * 1.12);
   --document-min-width: 220px;
+  /* 路径栏这一列的宽度：消息列、输入框都要按它对齐，所以只在这里写一次 */
+  --path-rail-width: 78px;
+  --detail-column-gap: 8px;
   --page-bg: #f7f6f1;
   --panel-bg: #ffffff;
   --panel-soft: #f2f0e9;
@@ -698,6 +701,17 @@ textarea {
 }
 
 /* .qa-header 整条去掉了：工具按钮在输入框旁，待确认样式见 .composer-tool.armed */
+
+/* 彻底删除不可撤销，在菜单里就要和其他项区分开 */
+.context-menu-danger {
+  color: #b42318;
+}
+
+.context-menu-danger:hover {
+  border-color: #b42318;
+  background: #b42318;
+  color: #ffffff;
+}
 
 .knowledge-button {
   min-width: 96px;
@@ -2015,6 +2029,7 @@ figcaption {
   color: #ffffff;
 }
 
+/* 对齐由后面那条 kuse 卡片规则统一管，这里只管内部排布 */
 .composer {
   display: flex;
   flex-direction: column;
@@ -2135,8 +2150,8 @@ figcaption {
 .detail-body {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 78px;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) var(--path-rail-width);
+  gap: var(--detail-column-gap);
   min-height: 0;
 }
 
@@ -2836,7 +2851,11 @@ button.fork-badge:hover .fork-num { color: var(--panel-bg); }
   焦点环画在卡片上而不是 textarea 上——整块读起来是一个输入面板。
 */
 .composer {
-  margin: 0 10px 10px;
+  /*
+   * 横跨整栏：左边缘贴齐消息列，右边缘贴齐路径栏外沿。
+   * 原来左右各留 10px，两边都差一截，谁也对不上。
+   */
+  margin: 0 0 10px;
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

@@ -6,6 +6,7 @@ import {
   dbPut,
   clearDocumentConversation,
   clearReaderRecords,
+  deleteDocumentCascade,
   deletePendingPdfImport,
   deleteHighlightsCascade,
   deleteThreadsCascade,
@@ -5127,6 +5128,11 @@ function showDocumentContextMenu(event, target) {
       button.hidden = true;
       continue;
     }
+    // 彻底删除只出现在回收站里：正常列表里误点一下就没得后悔了
+    if (action === "purge") {
+      button.hidden = !target.trashed;
+      continue;
+    }
     button.hidden = target.trashed ? action !== "restore" : action === "restore";
   }
 
@@ -5187,7 +5193,76 @@ async function handleContextMenuAction(event) {
 
   if (action === "restore") {
     target.type === "folder" ? await restoreFolder(target.id) : await restoreDocument(target.id);
+    return;
   }
+
+  if (action === "purge") {
+    target.type === "folder" ? await purgeFolder(target.id) : await purgeDocument(target.id);
+  }
+}
+
+/*
+ * 彻底删除：文档连同它的正文块、划线、问答、摘要和图谱切片一起消失。
+ * 这一步没有回收站兜底，所以先确认一次；文案里写清楚牵连了什么，
+ * 因为读者多半不知道一份文档背后还挂着这些记录。
+ */
+async function purgeDocument(documentId) {
+  const documentRecord = await dbGet("documents", documentId);
+  if (!documentRecord) {
+    return;
+  }
+  const title = documentRecord.title || "这份文档";
+  if (!window.confirm(`彻底删除《${title}》？\n\n它的正文、划线、问答记录和知识图谱切片会一起删除，无法恢复。`)) {
+    return;
+  }
+
+  const summary = await deleteDocumentCascade(documentId);
+  if (state.currentDocument?.id === documentId) {
+    await loadFallbackDocumentAfterDelete(documentId);
+  }
+  await refreshDocumentList();
+  notifyKnowledgeDataChanged("document-purged");
+  await logTask("document.purged", { documentId, ...summary });
+  setStatus(`已彻底删除《${title}》：${summary?.highlights || 0} 条划线、${summary?.messages || 0} 条对话记录一并清除。`);
+}
+
+async function purgeFolder(folderId) {
+  const settings = await getSettings();
+  const folders = normalizeDocumentFolders(settings.reader?.documentFolders);
+  const folder = folders.find((item) => item.id === folderId);
+  if (!folder) {
+    return;
+  }
+
+  const documents = await dbGetAll("documents");
+  const inFolder = documents.filter((item) => item.folderId === folderId || item.deletedWithFolderId === folderId);
+  if (
+    !window.confirm(
+      `彻底删除文件夹「${folder.name}」？\n\n里面的 ${inFolder.length} 份文档及其划线、问答记录会一起删除，无法恢复。`
+    )
+  ) {
+    return;
+  }
+
+  for (const documentRecord of inFolder) {
+    await deleteDocumentCascade(documentRecord.id);
+    if (state.currentDocument?.id === documentRecord.id) {
+      await loadFallbackDocumentAfterDelete(documentRecord.id);
+    }
+  }
+
+  const latest = await getSettings();
+  await saveSettings({
+    ...latest,
+    reader: {
+      ...latest.reader,
+      documentFolders: normalizeDocumentFolders(latest.reader?.documentFolders).filter((item) => item.id !== folderId)
+    }
+  });
+  await refreshDocumentList();
+  notifyKnowledgeDataChanged("folder-purged");
+  await logTask("folder.purged", { folderId, documents: inFolder.length });
+  setStatus(`已彻底删除文件夹「${folder.name}」及其中 ${inFolder.length} 份文档。`);
 }
 
 function normalizeDocumentFolders(folders) {
