@@ -56,7 +56,7 @@ export const DEFAULT_SETTINGS = {
     fontFamily: "system",
     preferredFontSize: 17,
     theme: "light",
-    // 联网查询是个开关：打开之后每次提问自动检索，不需要手动搜再挑
+    // 遗留字段：联网开关已统一到 ai.webSearch.enabled，这里只留给旧数据迁移用
     webSearchEnabled: false,
     documentFolders: []
   },
