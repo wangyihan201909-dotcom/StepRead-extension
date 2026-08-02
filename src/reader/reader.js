@@ -7798,7 +7798,8 @@ function getLayoutResizeBounds(side) {
 
 function applyLayoutState(options = {}) {
   elements.readerApp.classList.toggle("sidebar-collapsed", layoutState.sidebarCollapsed);
-  elements.sidebarCollapseButton.textContent = layoutState.sidebarCollapsed ? "▶" : "◀";
+  // 细箭头而不是实心三角：这只是一个手柄，不该比它旁边的内容还抢眼
+  elements.sidebarCollapseButton.textContent = layoutState.sidebarCollapsed ? "›" : "‹";
   elements.sidebarCollapseButton.title = layoutState.sidebarCollapsed ? "展开左侧栏" : "收起左侧栏";
   elements.sidebarCollapseButton.setAttribute("aria-expanded", String(!layoutState.sidebarCollapsed));
 

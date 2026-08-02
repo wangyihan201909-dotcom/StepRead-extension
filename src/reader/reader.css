@@ -437,10 +437,12 @@ textarea {
   display: none;
 }
 
+/* 收起后这是唯一的回来入口，所以始终可见，不跟着 hover 淡出 */
 .reader-app.sidebar-collapsed .sidebar-collapse-button {
-  top: 16px;
-  left: 12px;
-  transform: none;
+  top: 50%;
+  left: 6px;
+  transform: translateY(-50%);
+  opacity: 1;
   pointer-events: auto;
 }
 
@@ -475,26 +477,42 @@ textarea {
   outline-offset: -2px;
 }
 
+/*
+ * 收起手柄：一条吸附在侧边栏边缘的细条，不是一个浮在上面的方框按钮。
+ * 平时压得很淡，鼠标靠近分隔条才提上来——它是个手柄，不是一个动作。
+ */
 .sidebar-collapse-button {
   position: absolute;
-  top: 12px;
+  top: 50%;
   left: 50%;
-  width: 30px;
-  min-height: 30px;
+  width: 15px;
+  min-height: 46px;
   padding: 0;
-  border-color: var(--control-border);
-  border-radius: var(--radius-sm);
-  background: var(--panel-raised);
-  color: var(--muted-strong);
-  font-size: var(--app-small-font-size);
-  transform: translateX(-50%);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--panel-muted);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  transform: translate(-50%, -50%);
   cursor: pointer;
-  box-shadow: var(--shadow-soft);
+  opacity: 0.5;
+  box-shadow: none;
+  transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.left-resizer:hover .sidebar-collapse-button,
+.sidebar-collapse-button:focus-visible {
+  opacity: 1;
 }
 
 .sidebar-collapse-button:hover {
-  border-color: var(--primary);
-  color: var(--primary);
+  border: 0;
+  background: var(--panel-muted);
+  color: var(--text);
+  opacity: 1;
+  box-shadow: none;
 }
 
 .qa-panel {

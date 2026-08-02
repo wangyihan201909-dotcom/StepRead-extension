@@ -268,7 +268,14 @@ h3 {
   width: 40px;
 }
 
+/*
+ * 竖排文字不会被 button 默认的居中管到：写作方向转 90° 后，
+ * text-align 管的是纵向、宽度又由字形决定，所以要显式两轴居中。
+ */
 .drawer-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 40px;
   min-height: 0;
   padding: 0;
@@ -280,7 +287,6 @@ h3 {
 }
 
 .drawer-toggle-label {
-  display: block;
   writing-mode: vertical-rl;
   letter-spacing: 0.16em;
   font-size: var(--app-font-sm);
