@@ -2011,6 +2011,16 @@ figcaption {
   min-height: 0;
 }
 
+/* 还没有任何一轮对话：路径栏没有内容可画，整列让给正文 */
+.detail-body.rail-empty {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+.detail-body.rail-empty .path-rail {
+  display: none;
+}
+
 .path-rail {
   display: flex;
   flex-direction: column;
@@ -2022,32 +2032,39 @@ figcaption {
   transition: width 0.2s ease, background 0.2s ease;
 }
 
+/* 展开入口做成路径栏的表头：占满整列、有文字，而不是浮在空栏上的符号方块 */
 .path-rail-head {
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px 6px 4px;
+  padding: 0;
+  border-bottom: 1px solid var(--border);
 }
 
 .path-rail-button {
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  min-height: 22px;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: auto;
+  height: 28px;
+  min-height: 28px;
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border: 0;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
-  font-size: var(--app-xs-font-size);
+  font-size: var(--app-small-font-size);
+  font-weight: 600;
   line-height: 1;
+  box-shadow: none;
 }
 
 .path-rail-button:hover {
-  border-color: var(--control-border);
+  border: 0;
   background: var(--panel-bg);
   color: var(--text);
+  box-shadow: none;
 }
 
 .path-rail-scroll {

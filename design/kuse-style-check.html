@@ -3,46 +3,61 @@
   <head>
     <meta charset="utf-8">
     <title>StepRead · 布局核对</title>
-    <link rel="stylesheet" href="../src/reader/reader.css?v=d3">
+    <link rel="stylesheet" href="../src/reader/reader.css?v=e4">
     <style>
       body { overflow: auto; height: auto; padding: 20px; }
       .harness-label { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
       .row { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
-      /* 复刻 workspace 的三列，只为看分隔条上的手柄 */
-      .mini-workspace {
-        display: grid; grid-template-columns: 150px 6px 240px;
-        height: 220px; border: 1px dashed var(--control-border);
-      }
-      .mini-workspace .sidebar { background: var(--panel-bg); padding: 8px; font-size: 12px; }
-      .mini-workspace .document-pane { background: var(--page-bg); padding: 8px; font-size: 12px; }
+      .harness-col { width: 430px; border: 1px dashed var(--control-border); }
+      .qa-panel { display: flex; flex-direction: column; height: 300px; background: var(--chat-bg); }
+      .detail-body { flex: 1; min-height: 0; padding: 8px; }
+      .message-list { overflow: auto; display: grid;
+                      grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; }
     </style>
   </head>
   <body>
     <div class="row">
       <div>
-        <p class="harness-label">收起手柄（展开态）· 应是吸附在分隔条上的细箭头</p>
-        <div class="mini-workspace">
-          <aside class="sidebar">文档 / 目录</aside>
-          <div class="workspace-resizer left-resizer">
-            <button id="sidebarCollapseButton" class="sidebar-collapse-button" type="button" title="收起左侧栏">‹</button>
-          </div>
-          <section class="document-pane">正文</section>
+        <p class="harness-label">有对话 · 展开入口是路径栏的表头</p>
+        <div class="harness-col">
+          <section class="qa-panel">
+            <header class="qa-header"><h2>对话</h2></header>
+            <div class="detail-body">
+              <div class="message-list">
+                <div class="round"><div class="round-main"><p>位置编码具体怎么加进去？</p></div></div>
+              </div>
+              <aside class="path-rail">
+                <div class="path-rail-head">
+                  <button class="path-rail-button" type="button" title="全屏展开对话路径图">
+                    <span aria-hidden="true">⤢</span><span>路径</span>
+                  </button>
+                </div>
+                <div class="path-rail-scroll"><div class="path-rail-inner"><svg></svg></div></div>
+              </aside>
+            </div>
+          </section>
         </div>
       </div>
 
       <div>
-        <p class="harness-label">收起态 · 手柄贴左边缘、始终可见</p>
-        <div class="mini-workspace reader-app sidebar-collapsed" style="grid-template-columns: 0 6px 384px;">
-          <aside class="sidebar"></aside>
-          <div class="workspace-resizer left-resizer">
-            <button class="sidebar-collapse-button" type="button" title="展开左侧栏">›</button>
-          </div>
-          <section class="document-pane">正文</section>
+        <p class="harness-label">没有对话 · 整条路径栏应收掉</p>
+        <div class="harness-col">
+          <section class="qa-panel">
+            <header class="qa-header"><h2>对话</h2></header>
+            <div class="detail-body rail-empty">
+              <div class="message-list"></div>
+              <aside class="path-rail">
+                <div class="path-rail-head">
+                  <button class="path-rail-button" type="button">
+                    <span aria-hidden="true">⤢</span><span>路径</span>
+                  </button>
+                </div>
+                <div class="path-rail-scroll"><div class="path-rail-inner"><svg></svg></div></div>
+              </aside>
+            </div>
+          </section>
         </div>
       </div>
     </div>
-
-    <p class="harness-label" style="margin-top:20px">知识图谱页 · 「阅读证据」应在细条里两轴居中</p>
-    <iframe src="../src/knowledge/knowledge.html?v=d3" style="width:100%;height:420px;border:1px solid var(--border)"></iframe>
   </body>
 </html>

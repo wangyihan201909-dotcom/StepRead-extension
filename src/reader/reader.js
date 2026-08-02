@@ -144,6 +144,7 @@ const elements = {
   questionInput: document.querySelector("#questionInput"),
   sendQuestionButton: document.querySelector("#sendQuestionButton"),
   voiceInputButton: document.querySelector("#voiceInputButton"),
+  detailBody: document.querySelector("#detailBody"),
   pathRail: document.querySelector("#pathRail"),
   pathRailScroll: document.querySelector("#pathRailScroll"),
   pathRailInner: document.querySelector("#pathRailInner"),
@@ -5959,6 +5960,8 @@ function renderPathRail() {
 
   inner.querySelectorAll(".rail-dot, .fork-badge").forEach((node) => node.remove());
   const tree = state.roundTree;
+  // 一轮都没有时整条路径栏收掉：空栏上挂个展开按钮，点开也只有空画布
+  elements.detailBody?.classList.toggle("rail-empty", !tree?.rounds?.length);
   if (!tree?.rounds?.length) {
     elements.pathRailLinks.innerHTML = "";
     inner.style.height = "0px";

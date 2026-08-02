@@ -86,12 +86,16 @@
           </header>
 
           <section id="detailLayer" class="qa-layer qa-detail">
-            <div class="detail-body">
+            <div id="detailBody" class="detail-body">
               <div id="messageList" class="message-list chat-list"></div>
 
               <aside id="pathRail" class="path-rail" aria-label="对话路径">
+                <!-- 表头就是展开入口：带文字，不再是一个含义不明的符号方块 -->
                 <div class="path-rail-head">
-                  <button id="pathCanvasButton" class="path-rail-button" type="button" title="全屏展开对话路径图">⤢</button>
+                  <button id="pathCanvasButton" class="path-rail-button" type="button" title="全屏展开对话路径图">
+                    <span aria-hidden="true">⤢</span>
+                    <span>路径</span>
+                  </button>
                 </div>
                 <div id="pathRailScroll" class="path-rail-scroll">
                   <div id="pathRailInner" class="path-rail-inner">
