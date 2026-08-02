@@ -1,9 +1,11 @@
 import { createId, nowIso } from "../shared/defaults.js";
 import {
+  dbDelete,
   dbGet,
   dbGetAll,
   dbGetAllByIndex,
   dbPut,
+  dbPutMany,
   clearDocumentConversation,
   clearReaderRecords,
   deleteDocumentCascade,
@@ -92,6 +94,10 @@ const state = {
   selectedGlobalStartOffset: -1,
   selectedGlobalEndOffset: -1,
   sidebarTab: "documents",
+  // 这个文档下的话题，以及当前正在看哪一个；一个话题 = 一条对话路径
+  topics: [],
+  activeTopicId: "",
+  topicRoundCounts: new Map(),
   activeRoundId: "",
   roundTree: null,
   // 联网查询是个开关：开着的话每次提问自动检索，不需要先搜再挑
@@ -153,9 +159,13 @@ const elements = {
   selectionAskButton: document.querySelector("#selectionAskButton"),
   documentsTab: document.querySelector("#documentsTab"),
   tocTab: document.querySelector("#tocTab"),
+  topicsTab: document.querySelector("#topicsTab"),
   documentsPanel: document.querySelector("#documentsPanel"),
   tocPanel: document.querySelector("#tocPanel"),
+  topicsPanel: document.querySelector("#topicsPanel"),
   tocCount: document.querySelector("#tocCount"),
+  topicList: document.querySelector("#topicList"),
+  newTopicButton: document.querySelector("#newTopicButton"),
   selectionChips: document.querySelector("#selectionChips"),
   messageList: document.querySelector("#messageList"),
   composer: document.querySelector(".composer"),
@@ -426,8 +436,11 @@ function bindEvents() {
   elements.selectionAskButton.addEventListener("click", openDraftQuestion);
   elements.documentsTab.addEventListener("click", () => setSidebarTab("documents"));
   elements.tocTab.addEventListener("click", () => setSidebarTab("toc"));
+  elements.topicsTab.addEventListener("click", () => setSidebarTab("topics"));
   elements.documentsTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.tocTab.addEventListener("keydown", handleSidebarTabKeydown);
+  elements.topicsTab.addEventListener("keydown", handleSidebarTabKeydown);
+  elements.newTopicButton.addEventListener("click", startNewTopic);
   elements.knowledgeButton.addEventListener("click", openKnowledgePage);
   elements.sectionIndexButton.addEventListener("click", handleSectionIndexButton);
   elements.clearConversationButton.addEventListener("click", handleClearConversation);
@@ -761,6 +774,7 @@ async function loadDocument(documentId) {
   const unsubmittedCleanup = await cleanupUnsubmittedThreadRecords(documentId);
   state.highlights = await dbGetAllByIndex("highlights", "by_documentId", documentId);
   state.threads = await dbGetAllByIndex("threads", "by_documentId", documentId);
+  await loadTopics(documentId);
   const invalidCount = await auditInvalidReadingRecords(documentId, blocks, state.highlights, state.threads);
   if (unsubmittedCleanup.highlights) {
     setStatus(`已清理 ${unsubmittedCleanup.highlights} 条未提交问题的草稿划线。`);
@@ -775,8 +789,310 @@ async function loadDocument(documentId) {
   await persistLastDocument(documentId);
   renderDocument();
   renderSelection();
+  renderTopics();
   await renderMessages();
   await focusRequestedHighlight(documentId);
+}
+
+/* ------------------------------------------------------------------ 话题
+ *
+ * 一个话题 = 一条独立的对话路径。thread 仍然是存储单位（划线问答、知识图谱
+ * 都按 thread 走），话题在它上面多一层：thread.topicId 指回自己的话题，
+ * 对话栏只渲染当前话题下那些 thread 的消息。
+ */
+
+async function loadTopics(documentId) {
+  const topics = await dbGetAllByIndex("topics", "by_documentId", documentId);
+  state.topics = topics.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+
+  /*
+   * 老数据没有话题：把这个文档已有的对话整体收进一个「默认话题」，
+   * 而不是让它们变成一堆无主 thread 在任何话题下都看不见。
+   */
+  const orphanThreads = state.threads.filter((thread) => !thread.topicId);
+  if (!state.topics.length && !orphanThreads.length) {
+    state.activeTopicId = "";
+    return;
+  }
+
+  if (orphanThreads.length) {
+    const fallbackTopic = state.topics[0] || (await createTopicRecord(documentId, "默认话题"));
+    const migrated = orphanThreads.map((thread) => ({ ...thread, topicId: fallbackTopic.id }));
+    await dbPutMany("threads", migrated);
+    const migratedById = new Map(migrated.map((thread) => [thread.id, thread]));
+    state.threads = state.threads.map((thread) => migratedById.get(thread.id) || thread);
+    await logTask("topic.threads.migrated", { documentId, threads: migrated.length, topicId: fallbackTopic.id });
+  }
+
+  state.activeTopicId = state.topics[state.topics.length - 1]?.id || "";
+}
+
+async function createTopicRecord(documentId, title) {
+  const createdAt = nowIso();
+  const topic = {
+    id: createId("topic"),
+    documentId,
+    title: title || "新话题",
+    createdAt,
+    updatedAt: createdAt
+  };
+  await dbPut("topics", topic);
+  state.topics = [...state.topics, topic];
+  return topic;
+}
+
+/* 当前话题；没有就现开一个，这样第一次提问不需要先手动新建 */
+async function ensureActiveTopic() {
+  if (!state.currentDocument) {
+    return null;
+  }
+  const existing = state.topics.find((topic) => topic.id === state.activeTopicId);
+  if (existing) {
+    return existing;
+  }
+  const topic = await createTopicRecord(state.currentDocument.id, "新话题");
+  state.activeTopicId = topic.id;
+  renderTopics();
+  return topic;
+}
+
+function threadsInActiveTopic() {
+  if (!state.activeTopicId) {
+    return [];
+  }
+  return state.threads.filter((thread) => thread.topicId === state.activeTopicId);
+}
+
+/*
+ * 话题标题默认取第一个问题；用户可以改名。
+ * 标题只在话题还叫「新话题」时才自动补，避免覆盖改过的名字。
+ */
+async function nameTopicFromFirstQuestion(question) {
+  const topic = state.topics.find((item) => item.id === state.activeTopicId);
+  if (!topic || topic.title !== "新话题") {
+    return;
+  }
+  const updated = { ...topic, title: createThreadTitle(question), updatedAt: nowIso() };
+  await dbPut("topics", updated);
+  state.topics = state.topics.map((item) => (item.id === topic.id ? updated : item));
+  renderTopics();
+}
+
+function renderTopics() {
+  if (!elements.topicList) {
+    return;
+  }
+  elements.topicList.replaceChildren();
+
+  if (!state.topics.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "还没有话题。直接提问就会开出第一个，或点 ＋ 新建一个。";
+    elements.topicList.append(empty);
+    return;
+  }
+
+  const roundCounts = state.topicRoundCounts;
+  for (const topic of state.topics) {
+    const row = document.createElement("div");
+    row.className = "topic-row";
+    if (topic.id === state.activeTopicId) {
+      row.classList.add("active");
+    }
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "topic-item";
+    const name = document.createElement("span");
+    name.className = "topic-name";
+    name.textContent = createHistoryTitle(topic.title || "新话题");
+    const meta = document.createElement("span");
+    meta.className = "topic-meta";
+    const rounds = roundCounts.get(topic.id) || 0;
+    meta.textContent = rounds ? `${rounds} 轮对话` : "还没有对话";
+    button.append(name, meta);
+    button.title = topic.title || "";
+    button.addEventListener("click", () => void activateTopic(topic.id));
+
+    const renameButton = document.createElement("button");
+    renameButton.type = "button";
+    renameButton.className = "topic-rename-button";
+    renameButton.title = "重命名话题";
+    renameButton.setAttribute("aria-label", "重命名话题");
+    renameButton.textContent = "✎";
+    renameButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      startTopicRename(row, topic);
+    });
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "topic-delete-button";
+    deleteButton.title = "删除这个话题及其对话";
+    deleteButton.setAttribute("aria-label", "删除这个话题及其对话");
+    deleteButton.textContent = "×";
+    deleteButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void deleteTopic(topic);
+    });
+
+    row.append(button, renameButton, deleteButton);
+    elements.topicList.append(row);
+  }
+}
+
+/*
+ * 侧栏要显示每个话题各有多少轮，所以不能只数 roundTree —— 那棵树只有
+ * 当前话题的轮次，别的话题会一律显示成「还没有对话」。这里按文档里
+ * 所有 thread 的提问数分组统计。
+ */
+async function updateTopicRoundCounts() {
+  const byThread = await getMessagesByThreadIds(state.threads.map((thread) => thread.id));
+  const counts = new Map();
+  for (const thread of state.threads) {
+    const topicId = thread.topicId || "";
+    if (!topicId) {
+      continue;
+    }
+    const rounds = (byThread[thread.id] || []).filter((message) => message.role === "user").length;
+    if (rounds) {
+      counts.set(topicId, (counts.get(topicId) || 0) + rounds);
+    }
+  }
+  state.topicRoundCounts = counts;
+}
+
+async function activateTopic(topicId) {
+  if (topicId === state.activeTopicId) {
+    return;
+  }
+  await discardUnsubmittedDraft({ clearSelection: true, render: false });
+  state.activeTopicId = topicId;
+  state.activeThread = null;
+  state.activeHighlight = null;
+  state.activeRoundId = "";
+  state.roundTree = null;
+  state.editingQuestion = null;
+  clearDraftSelection();
+  hideSelectionAskButton();
+  renderTopics();
+  renderSelection();
+  await renderMessages();
+  refreshDocumentHighlights();
+}
+
+/* 新话题：对话栏清空，从这里开始长出一条新的对话路径 */
+async function startNewTopic() {
+  if (!state.currentDocument) {
+    setStatus("请先打开一份文档，再新建话题。");
+    return;
+  }
+  await discardUnsubmittedDraft({ clearSelection: true, render: false });
+  const topic = await createTopicRecord(state.currentDocument.id, "新话题");
+  state.activeTopicId = topic.id;
+  state.activeThread = null;
+  state.activeHighlight = null;
+  state.activeRoundId = "";
+  state.roundTree = null;
+  state.editingQuestion = null;
+  elements.questionInput.value = "";
+  clearDraftSelection();
+  hideSelectionAskButton();
+  setSidebarTab("topics");
+  renderTopics();
+  renderSelection();
+  await renderMessages();
+  refreshDocumentHighlights();
+  elements.questionInput.focus();
+  setStatus("已开始一个新话题；直接提问针对全文，先划线则针对那段原文。");
+}
+
+function startTopicRename(row, topic) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "topic-rename-input";
+  input.value = topic.title || "";
+  input.placeholder = "话题名称";
+
+  let settled = false;
+  const finish = async (commit) => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    const nextTitle = input.value.trim();
+    input.remove();
+    if (!commit || !nextTitle || nextTitle === topic.title) {
+      renderTopics();
+      return;
+    }
+    const updated = { ...topic, title: nextTitle, updatedAt: nowIso() };
+    await dbPut("topics", updated);
+    state.topics = state.topics.map((item) => (item.id === topic.id ? updated : item));
+    renderTopics();
+  };
+
+  input.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void finish(true);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      void finish(false);
+    }
+  });
+  input.addEventListener("blur", () => void finish(true));
+
+  row.replaceChildren(input);
+  input.focus();
+  input.select();
+}
+
+/*
+ * 删话题连它的对话一起删：话题里已经没有别的东西了，留个空壳没有意义。
+ * 划线跟着 thread 级联走，知识图谱里已放置的切片不受影响（和清空对话一致）。
+ */
+async function deleteTopic(topic) {
+  const threadIds = state.threads.filter((thread) => thread.topicId === topic.id).map((thread) => thread.id);
+  const highlightIds = state.highlights
+    .filter((highlight) => threadIds.includes(highlight.threadId))
+    .map((highlight) => highlight.id);
+
+  if (highlightIds.length) {
+    await deleteHighlightsCascade(highlightIds);
+  }
+  if (threadIds.length) {
+    await deleteThreadsCascade(threadIds);
+  }
+  await dbDelete("topics", topic.id);
+
+  state.topics = state.topics.filter((item) => item.id !== topic.id);
+  state.threads = state.threads.filter((thread) => !threadIds.includes(thread.id));
+  state.highlights = state.highlights.filter((highlight) => !highlightIds.includes(highlight.id));
+
+  if (state.activeTopicId === topic.id) {
+    state.activeTopicId = state.topics[state.topics.length - 1]?.id || "";
+    state.activeThread = null;
+    state.activeHighlight = null;
+    state.activeRoundId = "";
+    state.roundTree = null;
+    elements.questionInput.value = "";
+    clearDraftSelection();
+  }
+
+  await logTask("topic.deleted", {
+    documentId: state.currentDocument?.id || "",
+    topicId: topic.id,
+    threads: threadIds.length,
+    highlights: highlightIds.length
+  });
+  renderTopics();
+  renderSelection();
+  refreshDocumentHighlights();
+  await renderMessages();
+  notifyKnowledgeDataChanged("topic-deleted");
+  setStatus(`话题「${topic.title || "新话题"}」及其对话已删除。`);
 }
 
 /**
@@ -5756,7 +6072,13 @@ function buildRounds(messages) {
 
 /* 这个文档下所有 thread 的消息，按时间合成一条对话 */
 async function getDocumentMessages() {
-  const threadIds = state.threads.filter((thread) => !isDraftThread(thread)).map((thread) => thread.id);
+  /*
+   * 一个话题一条对话路径：只取当前话题下的 thread。
+   * 换话题时对话栏整条换掉，正是靠这里的过滤。
+   */
+  const threadIds = threadsInActiveTopic()
+    .filter((thread) => !isDraftThread(thread))
+    .map((thread) => thread.id);
   if (state.activeThread && !threadIds.includes(state.activeThread.id)) {
     threadIds.push(state.activeThread.id);
   }
@@ -5847,6 +6169,9 @@ async function renderMessages(options = {}) {
     state.activeRoundId = "";
     renderPathRail();
     updateSendState();
+    // 空话题也要刷：别的话题的轮数得照常显示出来
+    await updateTopicRoundCounts();
+    renderTopics();
     if (state.pathCanvas.open) {
       renderPathCanvas();
     }
@@ -5870,6 +6195,9 @@ async function renderMessages(options = {}) {
 
   renderPathRail();
   updateSendState();
+  // 话题列表上的轮数跨话题统计，消息变了就重算一次
+  await updateTopicRoundCounts();
+  renderTopics();
   if (state.pathCanvas.open) {
     renderPathCanvas();
   }
@@ -6551,9 +6879,11 @@ async function persistThreadFromSelection(options = {}) {
     createdAt,
     updatedAt: createdAt
   };
+  const topic = await ensureActiveTopic();
   const thread = {
     id: createId("thread"),
     documentId: state.currentDocument.id,
+    topicId: topic?.id || "",
     highlightId: highlight.id,
     title: createThreadTitle(selectedText),
     status: "draft",
@@ -6586,9 +6916,11 @@ async function createDocumentThread() {
   }
 
   const createdAt = nowIso();
+  const topic = await ensureActiveTopic();
   const thread = {
     id: createId("thread"),
     documentId: state.currentDocument.id,
+    topicId: topic?.id || "",
     highlightId: "",
     scope: "document",
     title: "全文提问",
@@ -6704,6 +7036,17 @@ async function focusRoundForThread(threadId) {
   if (!threadId) {
     return;
   }
+  /*
+   * 正文里的划线来自所有话题，点到别的话题的划线就先切过去 ——
+   * 否则只会提示「不在当前对话里」，等于告诉读者这条线点不动。
+   */
+  const owner = state.threads.find((thread) => thread.id === threadId);
+  if (owner?.topicId && owner.topicId !== state.activeTopicId) {
+    await activateTopic(owner.topicId);
+    const topic = state.topics.find((item) => item.id === owner.topicId);
+    setStatus(`已切换到话题「${topic?.title || "新话题"}」。`);
+  }
+
   const tree = state.roundTree;
   const target = tree?.rounds?.find((round) => round.user?.threadId === threadId);
   if (!target) {
@@ -6812,8 +7155,11 @@ async function sendQuestion(options = {}) {
   if (state.selectedText) {
     await createThreadFromSelection({ focusInput: false });
   } else {
-    // 没带划线的问题一律接在这个文档的对话上，不要散落到某条划线的 thread 里
-    const conversation = state.threads.find(
+    /*
+     * 没带划线的问题接在当前话题的对话上。这里只在本话题内找，
+     * 否则问题会掉进别的话题的 thread，两条路径就串了。
+     */
+    const conversation = threadsInActiveTopic().find(
       (thread) => isDocumentScopeThread(thread) && !isDraftThread(thread)
     );
     if (conversation) {
@@ -6828,6 +7174,7 @@ async function sendQuestion(options = {}) {
     await commitDraftThread({ question });
     refreshDocumentHighlights();
   }
+  await nameTopicFromFirstQuestion(question);
 
   if (!state.activeThread) {
     setStatus("没能创建问答记录，请重试。");
@@ -7465,8 +7812,12 @@ async function handleClearConversation() {
 
   const documentId = state.currentDocument.id;
   const summary = await clearDocumentConversation(documentId);
-  await logTask("document.conversation.cleared", { documentId, ...summary });
+  // 对话都没了，话题只剩空壳，一起清掉
+  await Promise.all(state.topics.map((topic) => dbDelete("topics", topic.id)));
+  await logTask("document.conversation.cleared", { documentId, topics: state.topics.length, ...summary });
 
+  state.topics = [];
+  state.activeTopicId = "";
   state.highlights = [];
   state.threads = [];
   state.activeThread = null;
@@ -7482,6 +7833,7 @@ async function handleClearConversation() {
 
   refreshDocumentHighlights();
   renderSelection();
+  renderTopics();
   await renderMessages();
   setStatus(
     `已清空：${summary.threads} 条问答、${summary.messages} 条消息、${summary.highlights} 条划线、${summary.summaries} 条摘要。知识图谱切片未删除。`
@@ -8061,16 +8413,33 @@ async function openKnowledgePage() {
   );
 }
 
+const SIDEBAR_TABS = ["documents", "toc", "topics"];
+
+function sidebarTabButton(name) {
+  if (name === "toc") {
+    return elements.tocTab;
+  }
+  return name === "topics" ? elements.topicsTab : elements.documentsTab;
+}
+
+function sidebarTabPanel(name) {
+  if (name === "toc") {
+    return elements.tocPanel;
+  }
+  return name === "topics" ? elements.topicsPanel : elements.documentsPanel;
+}
+
 function setSidebarTab(tab) {
-  const next = tab === "toc" ? "toc" : "documents";
+  const next = SIDEBAR_TABS.includes(tab) ? tab : "documents";
   state.sidebarTab = next;
-  const showToc = next === "toc";
-  elements.documentsTab.setAttribute("aria-selected", String(!showToc));
-  elements.tocTab.setAttribute("aria-selected", String(showToc));
-  elements.documentsPanel.toggleAttribute("hidden", showToc);
-  elements.tocPanel.toggleAttribute("hidden", !showToc);
+  for (const name of SIDEBAR_TABS) {
+    const selected = name === next;
+    sidebarTabButton(name).setAttribute("aria-selected", String(selected));
+    sidebarTabPanel(name).toggleAttribute("hidden", !selected);
+  }
   // 用 class 而不是 hidden：hidden 由新建文件夹的开合流程管着，两边会互相覆盖
-  elements.sidebarHead?.classList.toggle("toc-active", showToc);
+  elements.sidebarHead?.classList.toggle("toc-active", next === "toc");
+  elements.sidebarHead?.classList.toggle("topics-active", next === "topics");
 }
 
 function handleSidebarTabKeydown(event) {
@@ -8078,9 +8447,11 @@ function handleSidebarTabKeydown(event) {
     return;
   }
   event.preventDefault();
-  const next = state.sidebarTab === "documents" ? "toc" : "documents";
+  const step = event.key === "ArrowRight" ? 1 : -1;
+  const current = SIDEBAR_TABS.indexOf(state.sidebarTab);
+  const next = SIDEBAR_TABS[(current + step + SIDEBAR_TABS.length) % SIDEBAR_TABS.length];
   setSidebarTab(next);
-  (next === "toc" ? elements.tocTab : elements.documentsTab).focus();
+  sidebarTabButton(next).focus();
 }
 
 /* 章节数占着侧栏头右端那一格，光一个数字没有出处，所以补个 title */

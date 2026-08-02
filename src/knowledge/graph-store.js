@@ -144,7 +144,6 @@ export function collectQaTurns({ highlights = [], threads = [], messagesByThread
 
   for (const thread of threads) {
     const messages = sortMessages(messagesByThread[thread.id] || []);
-    const highlight = highlightsById.get(thread.highlightId) || null;
     let pendingUserMessage = null;
 
     for (const message of messages) {
@@ -158,6 +157,12 @@ export function collectQaTurns({ highlights = [], threads = [], messagesByThread
 
       const userMessage = pendingUserMessage;
       pendingUserMessage = null;
+      /*
+       * 划线挂在具体某一轮上，同一个 thread 里逐轮可以不同，
+       * 所以引用取这一轮自己的划线；老数据回落到 thread.highlightId。
+       */
+      const highlight =
+        highlightsById.get(userMessage?.highlightId || thread.highlightId || "") || null;
       turns.push({
         sourceKey: message.id,
         // 删除这一轮时要同时删掉提问那条消息
@@ -166,7 +171,7 @@ export function collectQaTurns({ highlights = [], threads = [], messagesByThread
         accepted: Boolean(message.graphAccepted),
         acceptedAt: message.graphAcceptedAt || "",
         threadId: thread.id,
-        highlightId: thread.highlightId || "",
+        highlightId: highlight?.id || "",
         blockId: highlight?.blockId || "",
         question: String(userMessage?.content || "").trim(),
         answer: String(message.content || "").trim(),

@@ -75,7 +75,7 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const DB_NAME = "edge-mv3-reader-db";
-export const DB_VERSION = 5;
+export const DB_VERSION = 6;
 
 export function nowIso() {
   return new Date().toISOString();

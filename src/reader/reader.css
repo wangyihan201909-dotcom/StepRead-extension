@@ -379,9 +379,11 @@ h1 {
   margin-bottom: 0;
 }
 
-/* 右端这一格两页共用：文档页是新建文件夹，目录页是章节数 */
-.sidebar-head.toc-active .icon-add-button,
-.sidebar-head:not(.toc-active) .sidebar-tab-count {
+/* 右端这一格三页共用：文档页添加文件，目录页章节数，话题页新建话题 */
+.sidebar-head.toc-active #addDocumentButton,
+.sidebar-head.topics-active #addDocumentButton,
+.sidebar-head:not(.toc-active) .sidebar-tab-count,
+.sidebar-head:not(.topics-active) #newTopicButton {
   display: none;
 }
 
@@ -642,7 +644,8 @@ textarea {
 .sidebar-tabs {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* 文档 / 目录 / 话题：minmax(0,1fr) 才能在窄侧栏里挤下三格而不换行 */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 2px;
   margin-bottom: 12px;
   padding: 2px;
@@ -653,8 +656,9 @@ textarea {
 
 .sidebar-tab {
   min-height: 28px;
-  padding: 0 8px;
-  gap: 5px;
+  padding: 0 4px;
+  gap: 4px;
+  white-space: nowrap;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -743,9 +747,96 @@ textarea {
 
 .document-list,
 .thread-list,
+.topic-list,
 .message-list {
   display: grid;
   gap: 4px;
+}
+
+/* ---------- 话题列表：一行一条对话路径 ---------- */
+
+.topic-list {
+  gap: 2px;
+  font-size: calc(var(--app-font-size) * 0.92);
+}
+
+.topic-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px 24px;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.topic-item {
+  display: grid;
+  gap: 2px;
+  align-items: flex-start;
+  min-height: 42px;
+  padding: 8px 8px 9px 10px;
+  line-height: 1.4;
+}
+
+.topic-name {
+  overflow-wrap: anywhere;
+}
+
+.topic-meta {
+  color: var(--muted);
+  font-size: calc(var(--app-font-size) * 0.78);
+  font-weight: 400;
+}
+
+.topic-row.active .topic-item {
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-left-color: var(--primary);
+  font-weight: 700;
+}
+
+.topic-row.active .topic-meta {
+  color: var(--primary);
+  font-weight: 400;
+}
+
+.topic-row:not(.active) .topic-item:hover {
+  background: var(--panel-muted);
+  box-shadow: none;
+  transform: none;
+}
+
+.topic-rename-input {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 32px;
+}
+
+.topic-rename-button,
+.topic-delete-button {
+  align-self: start;
+  width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  font-size: var(--app-xs-font-size);
+  font-weight: 650;
+}
+
+.topic-delete-button {
+  font-size: calc(var(--app-font-size) * 1.05);
+}
+
+.topic-rename-button:hover,
+.topic-rename-button:focus-visible,
+.topic-delete-button:hover,
+.topic-delete-button:focus-visible {
+  border-color: var(--control-border);
+  background: var(--panel-muted);
+  color: var(--text);
+  box-shadow: none;
+  transform: none;
 }
 
 .message-list {
@@ -928,7 +1019,8 @@ textarea {
 }
 
 .document-item,
-.thread-item {
+.thread-item,
+.topic-item {
   width: 100%;
   justify-content: flex-start;
   min-height: 32px;
