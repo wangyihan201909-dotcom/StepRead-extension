@@ -63,6 +63,25 @@
 
           <section id="tocPanel" class="sidebar-panel" role="tabpanel" aria-labelledby="tocTab" hidden>
             <p class="section-help">由标题自动生成，点击后跳转到正文对应位置。</p>
+
+            <!--
+              章节索引：预先给每章生成一段摘要，之后问「全书」类问题时带这份索引，
+              而不是把整本正文塞进上下文。划线提问仍然走原文，不受它影响。
+            -->
+            <div id="sectionIndexPanel" class="section-index" hidden>
+              <div class="section-index-head">
+                <span id="sectionIndexState" class="section-index-state">尚未生成章节索引</span>
+                <button id="sectionIndexButton" class="secondary section-index-button" type="button">生成</button>
+              </div>
+              <p id="sectionIndexHint" class="section-index-hint">
+                为每章生成一段摘要，之后问整本书的问题时只带索引，不必把全文塞进去。
+              </p>
+              <div id="sectionIndexProgress" class="section-index-progress" hidden>
+                <div class="section-index-bar"><span id="sectionIndexBarFill"></span></div>
+                <span id="sectionIndexProgressText" class="section-index-progress-text"></span>
+              </div>
+            </div>
+
             <ol id="tocList" class="toc-list"></ol>
           </section>
         </aside>

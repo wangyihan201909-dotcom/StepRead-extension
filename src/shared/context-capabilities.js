@@ -1006,7 +1006,7 @@ function getTopLevelChapterTitle(chapterTitle) {
   return normalizeContextText(chapterTitle).split(">").map((part) => normalizeContextText(part)).find(Boolean) || "";
 }
 
-function isHeadingBlock(block) {
+export function isHeadingBlock(block) {
   const type = String(block?.type || block?.kind || block?.role || "").toLowerCase();
   if (type === "heading" || type === "title" || type === "section-heading" || type === "section_title") {
     return true;
@@ -1019,11 +1019,11 @@ function isHeadingBlock(block) {
   ) && getHeadingTitle(block);
 }
 
-function getHeadingLevel(block) {
+export function getHeadingLevel(block) {
   return clampHeadingLevel(block?.level ?? block?.headingLevel ?? block?.depth ?? block?.outlineLevel ?? 2);
 }
 
-function getHeadingTitle(block) {
+export function getHeadingTitle(block) {
   const heading = block?.heading;
   if (typeof heading === "string") {
     return normalizeContextText(heading);
@@ -1046,7 +1046,7 @@ function getBlockType(block) {
   return normalizeContextText(block?.type || block?.kind || block?.role || "unknown").toLowerCase();
 }
 
-function getBlockOrder(block, highlight) {
+export function getBlockOrder(block, highlight) {
   if (Number.isFinite(highlight?.blockOrder)) {
     return highlight.blockOrder;
   }

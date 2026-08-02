@@ -400,6 +400,85 @@ export function parseWebSearchQueries(content) {
 }
 
 /*
+ * 章节摘要：为「大纲 + 摘要」这层索引生成单章的压缩版本。
+ *
+ * 这段摘要之后会代替原文回答全局问题，所以它要保住的是论证的骨架 ——
+ * 作者主张什么、凭什么、和别处怎么接 —— 而不是一段读起来漂亮的导语。
+ * 关键术语必须原样保留，否则读者拿术语提问时索引里检不到。
+ */
+const SECTION_SUMMARY_SYSTEM_PROMPT = [
+  "你在为一本书建立章节索引。这段摘要之后会代替原文，用来回答关于全书的整体问题。",
+  "",
+  "写出这一章：提出了什么主张、用什么论据或案例支撑、引入了哪些关键概念、",
+  "和前后文是什么关系（承接、转折、反驳、举例）、留下了什么未解决的问题。",
+  "",
+  "关键术语、人名、作品名、数据一律照原文写，不要改写成同义词 ——",
+  "读者会拿这些词来提问，改了就检不到。",
+  "作者自己的主张和他转述的他人观点必须分清楚，不要合并成一种声音。",
+  "",
+  "只输出摘要正文，300 到 600 字，不加标题、编号、前言或「本章讲述了」这类套话。",
+  "不要评价这一章写得好不好，你在做索引，不是写书评。"
+].join("\n");
+
+export async function summarizeSection({
+  documentTitle = "",
+  sectionTitle = "",
+  sectionText = "",
+  position = "",
+  aiSettings: providedAiSettings,
+  signal,
+  timeoutMs
+} = {}) {
+  const settings = providedAiSettings ? null : await getSettings();
+  const aiSettings = providedAiSettings || settings?.ai || {};
+  const startedAt = nowIso();
+
+  const apiMessages = [
+    { role: "system", content: SECTION_SUMMARY_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: [
+        documentTitle ? `书名：${documentTitle}` : "",
+        sectionTitle ? `本章标题：${sectionTitle}` : "",
+        position ? `位置：${position}` : "",
+        "",
+        "本章正文：",
+        sectionText
+      ]
+        .filter((line) => line !== "")
+        .join("\n")
+    }
+  ];
+  const runBase = {
+    id: createId("airun"),
+    threadId: "",
+    highlightId: "",
+    model: aiSettings.model || "",
+    request: {
+      baseUrl: aiSettings.baseUrl || "",
+      model: aiSettings.model || "",
+      messages: apiMessages.map((message) => ({ role: message.role, content: message.content }))
+    },
+    startedAt
+  };
+
+  if (aiSettings.demoMode || !aiSettings.apiKey) {
+    throw new AiRequestError("还没配好模型，无法生成章节索引。请先在设置里填 API key。");
+  }
+
+  return runLoggedChatCompletion({
+    aiSettings,
+    apiMessages,
+    temperature: 0.3,
+    runBase,
+    signal,
+    timeoutMs,
+    stream: false,
+    emptyError: "模型没有返回摘要。"
+  });
+}
+
+/*
  * 图谱问答的开场问候语：每次打开知识图谱时生成一句不超过 50 字的总览，
  * 代替原来页面顶部那一大段摘要。不落库，每次打开都重新生成。
  */

@@ -15,7 +15,18 @@ import {
 } from "../shared/db.js";
 import { logTask } from "../shared/logger.js";
 import { renderBlocks } from "../shared/block-renderer.js";
-import { answerThread, composeWebSearchQueries, parseWebSearchQueries } from "../shared/ai-client.js";
+import {
+  answerThread,
+  composeWebSearchQueries,
+  parseWebSearchQueries,
+  summarizeSection
+} from "../shared/ai-client.js";
+import {
+  clipSectionText,
+  getSectionIndexSignature,
+  getSectionIndexState,
+  splitDocumentIntoSections
+} from "../shared/section-index.js";
 import { normalizeFormulaSelection } from "../shared/formula-text-normalizer.js";
 import { openOrFocusExtensionPage } from "../shared/navigation.js";
 import { saveQaTurnSummary } from "../shared/qa-summary.js";
@@ -88,6 +99,8 @@ const state = {
   answerPhase: "",
   // answerRun 建立之前的那段准备期，靠它认出该给哪一轮画「准备中」
   pendingQuestionId: "",
+  // 章节索引生成中的那次运行，用来支持中途停止
+  sectionIndexRun: null,
   pathCanvas: { open: false, x: 60, y: 60, scale: 1, boxes: null },
   pdfViewerZoom: 1,
   pdfZoomMode: "fit-width",
@@ -150,6 +163,13 @@ const elements = {
   questionInput: document.querySelector("#questionInput"),
   sendQuestionButton: document.querySelector("#sendQuestionButton"),
   voiceInputButton: document.querySelector("#voiceInputButton"),
+  sectionIndexPanel: document.querySelector("#sectionIndexPanel"),
+  sectionIndexState: document.querySelector("#sectionIndexState"),
+  sectionIndexButton: document.querySelector("#sectionIndexButton"),
+  sectionIndexHint: document.querySelector("#sectionIndexHint"),
+  sectionIndexProgress: document.querySelector("#sectionIndexProgress"),
+  sectionIndexBarFill: document.querySelector("#sectionIndexBarFill"),
+  sectionIndexProgressText: document.querySelector("#sectionIndexProgressText"),
   detailBody: document.querySelector("#detailBody"),
   pathRail: document.querySelector("#pathRail"),
   pathRailScroll: document.querySelector("#pathRailScroll"),
@@ -400,6 +420,7 @@ function bindEvents() {
   elements.documentsTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.tocTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.knowledgeButton.addEventListener("click", openKnowledgePage);
+  elements.sectionIndexButton.addEventListener("click", handleSectionIndexButton);
   elements.clearConversationButton.addEventListener("click", handleClearConversation);
   elements.webSearchToggleButton.addEventListener("click", toggleWebSearchEnabled);
   elements.sendQuestionButton.addEventListener("click", handleQuestionButtonClick);
@@ -884,6 +905,7 @@ function renderDocument() {
     renderPdfTextLayerWarning();
   }
   renderToc();
+  renderSectionIndexPanel();
   updateCurrentSectionBar();
 }
 
@@ -7623,6 +7645,173 @@ async function resolveWebContextForQuestion(question, aiSettings, options = {}) 
     setStatus(`联网查询失败，这一问只用文档内容回答：${getErrorMessage(error)}`);
     return [];
   }
+}
+
+/* ---------- 章节索引：预编译「大纲 + 每章摘要」，供全书类问题使用 ---------- */
+
+function renderSectionIndexPanel() {
+  const panel = elements.sectionIndexPanel;
+  if (!panel) {
+    return;
+  }
+  const running = Boolean(state.sectionIndexRun);
+  const hasDocument = Boolean(state.currentDocument?.id) && state.blocks.length > 0;
+  panel.hidden = !hasDocument;
+  if (!hasDocument) {
+    return;
+  }
+
+  const { status, done, expected } = getSectionIndexState(state.currentDocument, state.blocks);
+  const labels = {
+    missing: `尚未生成章节索引（${expected} 章）`,
+    stale: `正文有变动，索引已过期（原 ${done} 章）`,
+    ready: `索引已就绪：${done} 章`
+  };
+  elements.sectionIndexState.textContent = running ? "正在生成章节索引…" : labels[status];
+  elements.sectionIndexButton.textContent = running ? "停止" : status === "ready" ? "重新生成" : "生成";
+  elements.sectionIndexButton.disabled = expected === 0 && !running;
+  elements.sectionIndexPanel.dataset.status = running ? "running" : status;
+
+  // 成本要在动手之前讲清楚：这是读者自己的 key，一次通读是笔真实开销
+  elements.sectionIndexHint.textContent = running
+    ? "可以随时停止；已经生成的章节会保留。"
+    : expected === 0
+      ? "这份文档没有可识别的章节标题，无法建立索引。"
+      : `会对 ${expected} 章各发一次模型请求（用你自己的 key）。之后问整本书的问题时只带索引，不必塞全文。`;
+}
+
+function renderSectionIndexProgress(done, total) {
+  if (!elements.sectionIndexProgress) {
+    return;
+  }
+  const active = total > 0 && state.sectionIndexRun;
+  elements.sectionIndexProgress.hidden = !active;
+  if (!active) {
+    return;
+  }
+  elements.sectionIndexBarFill.style.width = `${Math.round((done / total) * 100)}%`;
+  elements.sectionIndexProgressText.textContent = `${done} / ${total} 章`;
+}
+
+async function handleSectionIndexButton() {
+  if (state.sectionIndexRun) {
+    state.sectionIndexRun.cancelled = true;
+    state.sectionIndexRun.controller.abort();
+    setStatus("正在停止生成章节索引…");
+    return;
+  }
+  await generateSectionIndex();
+}
+
+/*
+ * 逐章生成，每章一次请求。串行而不是并发：读者用的是自己的 key，
+ * 并发很容易撞上供应商的速率限制，反而更慢也更容易整批失败。
+ * 每生成一章就落库一次，中途停下或出错时已完成的部分不会白花。
+ */
+async function generateSectionIndex() {
+  if (!state.currentDocument?.id) {
+    setStatus("请先打开一份文档。");
+    return;
+  }
+
+  const sections = splitDocumentIntoSections(state.blocks);
+  if (!sections.length) {
+    setStatus("这份文档没有可识别的章节标题，无法建立索引。");
+    return;
+  }
+
+  const settings = await getSettings();
+  const aiSettings = settings.ai || {};
+  const run = { controller: new AbortController(), cancelled: false };
+  state.sectionIndexRun = run;
+  renderSectionIndexPanel();
+  renderSectionIndexProgress(0, sections.length);
+
+  const documentTitle = getDocumentTopicForSearch() || state.currentDocument.title || "";
+  const finished = [];
+  let failed = 0;
+
+  try {
+    for (const [index, section] of sections.entries()) {
+      if (run.cancelled) {
+        break;
+      }
+      setStatus(`正在生成章节索引：${index + 1} / ${sections.length}　${section.title}`);
+      try {
+        const result = await summarizeSection({
+          documentTitle,
+          sectionTitle: section.title,
+          sectionText: clipSectionText(section.text),
+          position: `第 ${index + 1} 章，共 ${sections.length} 章`,
+          aiSettings,
+          signal: run.controller.signal
+        });
+        if (!result?.ok || !String(result.content || "").trim()) {
+          failed += 1;
+          continue;
+        }
+        finished.push({
+          id: section.id,
+          title: section.title,
+          path: section.path,
+          headingId: section.headingId,
+          startOrder: section.startOrder,
+          endOrder: section.endOrder,
+          summary: String(result.content).trim()
+        });
+        // 每章都存：中途停止时已完成的部分要留下来
+        await persistSectionIndex(finished, sections.length, aiSettings.model || "");
+      } catch (error) {
+        if (run.cancelled) {
+          break;
+        }
+        failed += 1;
+        await logTask("section-index.section-failed", {
+          documentId: state.currentDocument.id,
+          section: section.title,
+          message: getErrorMessage(error)
+        });
+      }
+      renderSectionIndexProgress(finished.length, sections.length);
+    }
+
+    await logTask("section-index.generated", {
+      documentId: state.currentDocument.id,
+      sections: finished.length,
+      expected: sections.length,
+      failed,
+      cancelled: run.cancelled
+    });
+
+    if (run.cancelled) {
+      setStatus(`已停止；保留了 ${finished.length} / ${sections.length} 章的索引。`);
+    } else if (failed) {
+      setStatus(`章节索引生成完毕：成功 ${finished.length} 章，失败 ${failed} 章。可以再点一次重试失败的部分。`);
+    } else {
+      setStatus(`章节索引已生成：${finished.length} 章。之后问整本书的问题会带上它。`);
+    }
+  } finally {
+    state.sectionIndexRun = null;
+    renderSectionIndexPanel();
+    renderSectionIndexProgress(finished.length, sections.length);
+  }
+}
+
+async function persistSectionIndex(sections, expected, model) {
+  const record = {
+    ...state.currentDocument,
+    sectionIndex: {
+      sections,
+      expected,
+      model,
+      // 签名对不上就说明正文换了，界面上会标成「已过期」
+      signature: getSectionIndexSignature(state.blocks),
+      generatedAt: nowIso()
+    },
+    updatedAt: nowIso()
+  };
+  await dbPut("documents", record);
+  state.currentDocument = record;
 }
 
 /*
