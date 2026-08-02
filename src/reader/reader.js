@@ -15,7 +15,7 @@ import {
 } from "../shared/db.js";
 import { logTask } from "../shared/logger.js";
 import { renderBlocks } from "../shared/block-renderer.js";
-import { answerThread } from "../shared/ai-client.js";
+import { answerThread, composeWebSearchQueries, parseWebSearchQueries } from "../shared/ai-client.js";
 import { normalizeFormulaSelection } from "../shared/formula-text-normalizer.js";
 import { openOrFocusExtensionPage } from "../shared/navigation.js";
 import { saveQaTurnSummary } from "../shared/qa-summary.js";
@@ -5790,13 +5790,17 @@ function buildRoundElement(round, index, path, fallbackModelLabel, isLast) {
     sources.className = "round-web-sources";
     const lead = document.createElement("span");
     lead.className = "round-web-lead";
-    lead.textContent = "这一问带了联网结果：";
+    // 把实际发出的检索词摆出来：搜得不对时，一眼能看出是词的问题还是结果的问题
+    const queries = [...new Set(webContext.map((item) => item.query).filter(Boolean))];
+    lead.textContent = queries.length ? `联网检索「${queries.join("」「")}」：` : "这一问带了联网结果：";
     sources.append(lead);
     for (const item of webContext) {
       const link = document.createElement(item.url ? "a" : "span");
       link.className = "round-web-source";
       link.textContent = item.source || item.title;
-      link.title = item.title;
+      link.title = [item.title, item.query ? `检索词：${item.query}` : "", Number.isFinite(item.score) ? `相关度：${item.score.toFixed(2)}` : ""]
+        .filter(Boolean)
+        .join("\n");
       if (item.url) {
         link.href = item.url;
         link.target = "_blank";
@@ -6817,7 +6821,15 @@ async function persistUserQuestionMessage({ question, model, existingUserMessage
         // 空串代表这条 thread 的第一轮；重新编辑旧问题时不动它原有的父轮
         parentId,
         // 这一问带了哪些联网结果，存下来才能在轮次里回看来源
-        webContext: webContext.map((item) => ({ title: item.title, url: item.url, snippet: item.snippet, source: item.source })),
+        // query / score 一起存下来：事后回看这一轮时还能知道当时搜的是什么、搜得准不准
+        webContext: webContext.map((item) => ({
+          title: item.title,
+          url: item.url,
+          snippet: item.snippet,
+          source: item.source,
+          query: item.query || "",
+          score: Number.isFinite(item.score) ? item.score : null
+        })),
         content: question,
         model,
         answerStatus: "submitted",
@@ -7403,6 +7415,8 @@ function toggleVoiceInput() {
  */
 const JUNK_DOCUMENT_TITLES = /^(about:blank|untitled|new tab|新标签页|未命名|document)$/i;
 const WEB_QUERY_MAX_CHARS = 200;
+// 模型可能给 3 条，但每条都是一次搜索请求，所以实际只跑前两条
+const WEB_QUERIES_PER_QUESTION = 2;
 const WEB_QUERY_QUESTION_CHARS = 120;
 const WEB_QUERY_PART_CHARS = 50;
 
@@ -7475,23 +7489,106 @@ async function resolveWebContextForQuestion(question, aiSettings) {
     return [];
   }
 
-  const query = buildWebSearchQuery(question);
-  setStatus("正在联网查询…");
-  try {
-    const results = await searchWeb({ query, aiSettings });
-    if (results.length) {
-      setStatus(`已带上 ${results.length} 条联网结果，来源显示在这一轮下面。`);
-    }
+  const highlight = state.activeHighlight;
+  const documentTitle = getDocumentTopicForSearch();
+  const chapterTitle = getChapterTitleForSearch(highlight);
+
+  setStatus("正在整理检索词…");
+  const plan = await planWebSearchQueries({
+    question,
+    documentTitle,
+    chapterTitle,
+    highlightText: highlight?.text || "",
+    aiSettings
+  });
+
+  // 模型判定这一问没有可检索的公共知识时，如实说明，不硬凑几条不相干的结果
+  if (plan.skipped) {
+    setStatus("这个问题只关乎文档本身，网上没有对应资料，这一轮只用文档内容回答。");
     await logTask("web.search.auto", {
       documentId: state.currentDocument?.id || "",
       provider: aiSettings?.webSearch?.provider || "",
-      query,
-      results: results.length
+      queries: [],
+      querySource: plan.source,
+      skipped: true,
+      results: 0
     });
-    return results;
+    return [];
+  }
+
+  setStatus(`正在联网查询：${plan.queries.join(" / ")}`);
+  try {
+    const merged = [];
+    const seenUrls = new Set();
+    for (const query of plan.queries) {
+      const results = await searchWeb({ query, aiSettings });
+      for (const result of results) {
+        const key = result.url || `${query}:${result.title}`;
+        if (seenUrls.has(key)) {
+          continue;
+        }
+        seenUrls.add(key);
+        merged.push({ ...result, query });
+      }
+    }
+
+    const limit = getWebSearchSettings(aiSettings).maxResults;
+    const adopted = merged.slice(0, limit);
+    if (adopted.length) {
+      setStatus(`已带上 ${adopted.length} 条联网结果，来源和检索词显示在这一轮下面。`);
+    } else {
+      setStatus("联网没搜到结果，这一轮只用文档内容回答。");
+    }
+
+    // 排查相关性要看三件事：实际发出的词、每条的分数、哪些真的被采纳了
+    await logTask("web.search.auto", {
+      documentId: state.currentDocument?.id || "",
+      provider: aiSettings?.webSearch?.provider || "",
+      queries: plan.queries,
+      querySource: plan.source,
+      found: merged.length,
+      results: adopted.length,
+      hits: merged.map((item, index) => ({
+        query: item.query,
+        title: item.title,
+        source: item.source,
+        score: item.score,
+        adopted: index < limit
+      }))
+    });
+    return adopted;
   } catch (error) {
     setStatus(`联网查询失败，这一问只用文档内容回答：${getErrorMessage(error)}`);
     return [];
+  }
+}
+
+/*
+ * 检索词由模型提炼：把「问题 + 文档主题 + 章节 + 划线」交给它，
+ * 让它还原出读者真正想查的概念。模型不可用或出错时退回本地启发式拼法，
+ * 联网这件事不该因为改写失败就整个歇掉。
+ */
+async function planWebSearchQueries({ question, documentTitle, chapterTitle, highlightText, aiSettings }) {
+  const fallback = { queries: [buildWebSearchQuery(question)], source: "heuristic", skipped: false };
+  try {
+    const result = await composeWebSearchQueries({
+      documentTitle,
+      chapterTitle,
+      highlightText,
+      question,
+      aiSettings
+    });
+    if (!result?.ok || result.demo) {
+      return fallback;
+    }
+    const queries = parseWebSearchQueries(result.content);
+    if (!queries.length) {
+      // 模型明确答「无」：这是一个判断，不是失败，不该退回硬拼
+      return { queries: [], source: "model", skipped: true };
+    }
+    return { queries: queries.slice(0, WEB_QUERIES_PER_QUESTION), source: "model", skipped: false };
+  } catch (error) {
+    return fallback;
   }
 }
 

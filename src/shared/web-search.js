@@ -119,7 +119,9 @@ async function searchTavily(query, settings, signal) {
   return normalizeResults(payload?.results, (item) => ({
     title: item?.title,
     url: item?.url,
-    snippet: item?.content || item?.raw_content
+    snippet: item?.content || item?.raw_content,
+    // Tavily 会给每条一个相关度分数，留着用于排查「为什么搜回来的东西不相干」
+    score: item?.score
   }));
 }
 
@@ -162,11 +164,13 @@ function normalizeResults(list, pick) {
     .map((item) => {
       const picked = pick(item) || {};
       const url = String(picked.url || "").trim();
+      const score = Number(picked.score);
       return {
         title: clip(picked.title, 160) || url || "未命名结果",
         url,
         snippet: clip(picked.snippet, MAX_SNIPPET_CHARS),
-        source: hostOf(url)
+        source: hostOf(url),
+        score: Number.isFinite(score) ? score : null
       };
     })
     .filter((item) => item.snippet || item.url);

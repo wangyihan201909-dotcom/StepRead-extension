@@ -238,6 +238,134 @@ export async function generateKnowledgeReport({
 }
 
 /*
+ * 把「读者的问题 + 他所在的位置」翻译成搜索引擎吃得下的检索词。
+ *
+ * 直接拿问题去搜是搜不准的：「主体性的极化是什么意思」自己不含主题。
+ * 而把文档标题、章节、划线一股脑拼在问题后面同样不行 —— 那是一袋关键词，
+ * 焦点被稀释，搜索引擎只会更迷茫。检索词需要的是「提炼」，不是「堆砌」，
+ * 这件事只有读得懂中文语义的模型能做。
+ *
+ * 输出每行一条，最多 3 条；判断这个问题根本没有可检索的公共知识时输出「无」。
+ */
+const WEB_QUERY_SYSTEM_PROMPT = [
+  "你在为一次文档阅读中的提问准备网络检索词。",
+  "只输出检索词本身，每行一条，最多 3 条，不要编号、引号、解释或任何多余的字。",
+  "检索词要像人在搜索框里输入的那样：关键词或短语组合，一般 3 到 12 个字，不要写成完整句子。",
+  "第一条最重要，必须最贴近读者真正想弄清的那件事。",
+  "把问题里的指代补全成具体概念：读者问「这个说法成立吗」时，要还原成他指的那个说法讲的是什么。",
+  "只保留公共知识里可能存在的概念、术语、人名、作品名、事件；",
+  "文档私有的表述（作者自造的提法、章节编号、这份文件的标题）不要照抄进检索词。",
+  "如果这个问题只关乎文档自身内容、网上不可能有对应资料，就只输出一个字：无"
+].join("\n");
+
+const MAX_WEB_QUERIES = 3;
+const MAX_WEB_QUERY_CHARS = 60;
+
+export async function composeWebSearchQueries({
+  documentTitle = "",
+  chapterTitle = "",
+  highlightText = "",
+  question = "",
+  aiSettings: providedAiSettings,
+  signal,
+  timeoutMs
+} = {}) {
+  const settings = providedAiSettings ? null : await getSettings();
+  const aiSettings = providedAiSettings || settings?.ai || {};
+  const startedAt = nowIso();
+
+  const apiMessages = [
+    { role: "system", content: WEB_QUERY_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: [
+        documentTitle ? `读者在读：${documentTitle}` : "",
+        chapterTitle ? `当前章节：${chapterTitle}` : "",
+        highlightText ? `他划出的原文：${String(highlightText).slice(0, 300)}` : "",
+        `他的问题：${question}`,
+        "请给出检索词。"
+      ]
+        .filter(Boolean)
+        .join("\n")
+    }
+  ];
+  const runBase = {
+    id: createId("airun"),
+    threadId: "",
+    highlightId: "",
+    model: aiSettings.model || "",
+    request: {
+      baseUrl: aiSettings.baseUrl || "",
+      model: aiSettings.model || "",
+      messages: apiMessages.map((message) => ({ role: message.role, content: message.content }))
+    },
+    startedAt
+  };
+
+  // 没有模型可用时不猜：交回空数组，调用方退回自己的启发式拼法
+  if (aiSettings.demoMode || !aiSettings.apiKey) {
+    await logAiRun({
+      ...runBase,
+      provider: "local-demo",
+      response: { content: "" },
+      status: "success",
+      completedAt: nowIso()
+    });
+    return createAiResult({
+      ok: true,
+      content: "",
+      demo: true,
+      model: aiSettings.model || "",
+      runId: runBase.id
+    });
+  }
+
+  return runLoggedChatCompletion({
+    aiSettings,
+    apiMessages,
+    temperature: 0.2,
+    runBase,
+    signal,
+    timeoutMs,
+    stream: false,
+    emptyError: "模型没有给出检索词。"
+  });
+}
+
+/* 模型给的是自由文本，切成干净的检索词数组；判定「无」时返回空数组 */
+export function parseWebSearchQueries(content) {
+  const lines = String(content || "")
+    .split("\n")
+    .map((line) =>
+      line
+        // 去掉「1. 」「- 」「• 」这类前缀和包裹的引号
+        .replace(/^\s*(?:\d+[.、)]|[-*•])\s*/, "")
+        .replace(/^["'“”「『]+|["'“”」』]+$/g, "")
+        .trim()
+    )
+    .filter(Boolean);
+
+  if (!lines.length || /^(无|none|n\/a)$/i.test(lines[0])) {
+    return [];
+  }
+
+  const seen = new Set();
+  const queries = [];
+  for (const line of lines) {
+    const query = line.slice(0, MAX_WEB_QUERY_CHARS).trim();
+    const key = query.toLowerCase();
+    if (query && !seen.has(key)) {
+      seen.add(key);
+      queries.push(query);
+    }
+    if (queries.length >= MAX_WEB_QUERIES) {
+      break;
+    }
+  }
+  return queries;
+}
+
+/*
  * 图谱问答的开场问候语：每次打开知识图谱时生成一句不超过 50 字的总览，
  * 代替原来页面顶部那一大段摘要。不落库，每次打开都重新生成。
  */
