@@ -84,6 +84,10 @@ const state = {
   roundTree: null,
   // 联网查询是个开关：开着的话每次提问自动检索，不需要先搜再挑
   webSearchEnabled: false,
+  // 出答案之前还有提炼检索词、联网这两步，得让读者看见到底在做什么
+  answerPhase: "",
+  // answerRun 建立之前的那段准备期，靠它认出该给哪一轮画「准备中」
+  pendingQuestionId: "",
   pathCanvas: { open: false, x: 60, y: 60, scale: 1, boxes: null },
   pdfViewerZoom: 1,
   pdfZoomMode: "fit-width",
@@ -5825,8 +5829,11 @@ function buildRoundElement(round, index, path, fallbackModelLabel, isLast) {
   }
   const turnState = getTurnStateForRound(round);
   if (turnState) {
+    // 准备中和生成中共用一张卡：读者看到的是一条连续推进的进度，不是两种状态
     answerHost.append(
-      turnState.status === "running" ? renderStreamingAnswerCard(turnState) : renderTurnStateCard(turnState)
+      turnState.status === "running" || turnState.status === "preparing"
+        ? renderStreamingAnswerCard(turnState)
+        : renderTurnStateCard(turnState)
     );
   }
   main.append(answerHost);
@@ -6169,6 +6176,24 @@ function openBranchPop(anchor, round, activeChildIndex) {
 function getTurnStateForRound(round) {
   const message = round.user;
   const activeRun = state.activeAnswerRun;
+
+  /*
+   * 提炼检索词和联网都发生在 answerRun 建立之前。这段时间如果不画卡片，
+   * 界面上就是一片沉默 —— 读者只会以为卡住了。所以先给一张准备中的卡，
+   * 用和流式回答一样的样式，好让「准备 → 生成」看起来是同一件事在推进。
+   */
+  if (state.pendingQuestionId && state.pendingQuestionId === message.id && !round.assistant) {
+    return {
+      status: "preparing",
+      threadId: message.threadId,
+      userMessageId: message.id,
+      question: message.content,
+      model: message.model,
+      streamContent: "",
+      text: state.answerPhase || "正在准备…"
+    };
+  }
+
   if (activeRun?.threadId === message.threadId && activeRun.userMessageId === message.id) {
     return {
       status: "running",
@@ -6265,7 +6290,8 @@ function renderStreamingAnswerCard(turnState) {
   } else {
     const paragraph = document.createElement("p");
     paragraph.className = "message-paragraph message-stream-placeholder";
-    paragraph.textContent = "正在生成回答…";
+    // 出答案前的每一步都报出来，否则读者只看到一段沉默，会以为页面卡死
+    paragraph.textContent = state.answerPhase || "正在生成回答…";
     content.append(paragraph);
   }
 
@@ -6692,25 +6718,47 @@ async function sendQuestion(options = {}) {
   const settingsAtQuestion = await getSettings();
   const aiSettingsAtQuestion = { ...(settingsAtQuestion.ai || {}) };
   const modelAtQuestion = aiSettingsAtQuestion.model || "当前模型";
-  /*
-   * 联网查询开着就直接用这个问题去搜，搜到的全部带上，不再要求逐条勾选。
-   * 手动勾过的优先：🌐 面板仍然可以先搜先挑，那种情况下不再自动覆盖。
-   * 结果依旧会显示在这一轮下面，来源可点，所以「带了什么」仍然看得见。
-   */
-  const webContext = await resolveWebContextForQuestion(question, aiSettingsAtQuestion);
-
   // 以发送这一刻的当前轮作为父轮：当前轮已经有后续时，这里就自然分出一条支线
   // 父轮要在整条对话里算，否则分支会挂错
   const treeBeforeQuestion = buildRounds(await getDocumentMessages());
   const parentRoundId = resolveActiveRoundId(treeBeforeQuestion);
+  /*
+   * 问题先落库先上屏，联网放到后面。
+   * 反过来的话，提炼检索词那次模型调用加上两次搜索请求全都发生在
+   * 界面还是空的时候 —— 读者看到的就是「点了发送，什么都没发生」。
+   */
   const userMessage = await persistUserQuestionMessage({
     question,
     model: modelAtQuestion,
     existingUserMessage: options.userMessage,
     parentId: parentRoundId,
-    webContext
+    webContext: []
   });
   state.activeRoundId = userMessage.id;
+  state.pendingQuestionId = userMessage.id;
+  setAnswerPhase("已收到问题，正在准备…");
+  await renderMessages();
+
+  /*
+   * 联网查询开着就直接用这个问题去搜，搜到的全部带上，不再要求逐条勾选。
+   * 手动勾过的优先：🌐 面板仍然可以先搜先挑，那种情况下不再自动覆盖。
+   * 结果依旧会显示在这一轮下面，来源可点，所以「带了什么」仍然看得见。
+   */
+  const webContext = await resolveWebContextForQuestion(question, aiSettingsAtQuestion, {
+    history: buildRecentQaForQuery(treeBeforeQuestion, parentRoundId)
+  });
+  if (webContext.length) {
+    // 搜完再把结果补回那条问题上，轮次里才看得到来源
+    userMessage.webContext = webContext.map((item) => ({
+      title: item.title,
+      url: item.url,
+      snippet: item.snippet,
+      source: item.source,
+      query: item.query || "",
+      score: Number.isFinite(item.score) ? item.score : null
+    }));
+    await dbPut("messages", userMessage);
+  }
   const answerRun = {
     id: createId("answerRun"),
     controller: new AbortController(),
@@ -6738,6 +6786,9 @@ async function sendQuestion(options = {}) {
   };
 
   state.activeAnswerRun = answerRun;
+  // answerRun 接手之后就由它画卡片，准备期的标记要撤掉
+  state.pendingQuestionId = "";
+  setAnswerPhase("");
   state.editingQuestion = {
     threadId: userMessage.threadId,
     userMessageId: userMessage.id
@@ -6797,6 +6848,9 @@ async function sendQuestion(options = {}) {
     if (state.activeAnswerRun?.id === answerRun.id) {
       state.activeAnswerRun = null;
     }
+    // 任何异常路径都别把「准备中」的卡留在屏幕上转圈
+    state.pendingQuestionId = "";
+    setAnswerPhase("");
     updateSendState();
   }
 }
@@ -7478,7 +7532,7 @@ function buildWebSearchQuery(question) {
   return trimForQuery([asked, ...parts].join(" "), WEB_QUERY_MAX_CHARS);
 }
 
-async function resolveWebContextForQuestion(question, aiSettings) {
+async function resolveWebContextForQuestion(question, aiSettings, options = {}) {
   // 判定完全依据设置本身，state 只用来画按钮，避免两边漂移
   const webSearch = getWebSearchSettings(aiSettings);
   if (!webSearch.enabled) {
@@ -7493,12 +7547,14 @@ async function resolveWebContextForQuestion(question, aiSettings) {
   const documentTitle = getDocumentTopicForSearch();
   const chapterTitle = getChapterTitleForSearch(highlight);
 
+  setAnswerPhase("正在整理检索词…");
   setStatus("正在整理检索词…");
   const plan = await planWebSearchQueries({
     question,
     documentTitle,
     chapterTitle,
     highlightText: highlight?.text || "",
+    history: options.history || [],
     aiSettings
   });
 
@@ -7520,7 +7576,13 @@ async function resolveWebContextForQuestion(question, aiSettings) {
   try {
     const merged = [];
     const seenUrls = new Set();
-    for (const query of plan.queries) {
+    for (const [index, query] of plan.queries.entries()) {
+      // 逐条报出来：多条检索词时读者能看出进度在走，而不是停在同一句话上
+      setAnswerPhase(
+        plan.queries.length > 1
+          ? `正在联网检索（${index + 1}/${plan.queries.length}）：${query}`
+          : `正在联网检索：${query}`
+      );
       const results = await searchWeb({ query, aiSettings });
       for (const result of results) {
         const key = result.url || `${query}:${result.title}`;
@@ -7564,17 +7626,48 @@ async function resolveWebContextForQuestion(question, aiSettings) {
 }
 
 /*
+ * 阶段提示直接改那个占位段落，不重画整棵树：
+ * 这几步彼此间隔很短，整树重渲染既浪费，也会把滚动位置顶掉。
+ */
+function setAnswerPhase(text) {
+  state.answerPhase = String(text || "");
+  const placeholder = elements.messageList?.querySelector(".message-stream-placeholder");
+  if (placeholder && state.answerPhase) {
+    placeholder.textContent = state.answerPhase;
+  }
+}
+
+/*
+ * 提炼检索词也要看对话语境：读者接着上一轮问「那它和前面说的冲突吗」，
+ * 光看这一句是提不出检索词的 —— 指代的对象在上一轮里。
+ */
+function buildRecentQaForQuery(tree, roundId, limit = 2) {
+  if (!tree || !roundId) {
+    return [];
+  }
+  const path = roundPath(tree, roundId);
+  return path
+    .slice(-limit)
+    .map((round) => ({
+      question: String(round.user?.content || "").slice(0, 200),
+      answer: String(round.assistant?.content || "").slice(0, 300)
+    }))
+    .filter((item) => item.question);
+}
+
+/*
  * 检索词由模型提炼：把「问题 + 文档主题 + 章节 + 划线」交给它，
  * 让它还原出读者真正想查的概念。模型不可用或出错时退回本地启发式拼法，
  * 联网这件事不该因为改写失败就整个歇掉。
  */
-async function planWebSearchQueries({ question, documentTitle, chapterTitle, highlightText, aiSettings }) {
+async function planWebSearchQueries({ question, documentTitle, chapterTitle, highlightText, history, aiSettings }) {
   const fallback = { queries: [buildWebSearchQuery(question)], source: "heuristic", skipped: false };
   try {
     const result = await composeWebSearchQueries({
       documentTitle,
       chapterTitle,
       highlightText,
+      history,
       question,
       aiSettings
     });

@@ -249,13 +249,23 @@ export async function generateKnowledgeReport({
  */
 const WEB_QUERY_SYSTEM_PROMPT = [
   "你在为一次文档阅读中的提问准备网络检索词。",
+  "",
+  "先判断读者真正想查证的是什么。他的问题往往依赖上下文才完整：",
+  "「这个说法成立吗」「那它和前面说的冲突吗」这类问法，指代的对象在划线原文或上一轮对话里，",
+  "必须先把指代还原成具体概念，再据此写检索词。",
+  "读者接着上一轮追问时，检索词要顺着那一轮的话题走，不能只看最后这一句。",
+  "",
+  "然后判断这件事在公开资料里是否查得到：",
+  "学术概念、理论、术语、人名、作品、事件、数据 —— 查得到；",
+  "这份文档自己的论证、作者自造的提法、章节编号、文件名 —— 查不到，别写进检索词。",
+  "如果读者问的完全是文档内部的事（他这段在讲什么、作者为什么这么安排），",
+  "就只输出一个字：无",
+  "",
+  "输出要求：",
   "只输出检索词本身，每行一条，最多 3 条，不要编号、引号、解释或任何多余的字。",
-  "检索词要像人在搜索框里输入的那样：关键词或短语组合，一般 3 到 12 个字，不要写成完整句子。",
-  "第一条最重要，必须最贴近读者真正想弄清的那件事。",
-  "把问题里的指代补全成具体概念：读者问「这个说法成立吗」时，要还原成他指的那个说法讲的是什么。",
-  "只保留公共知识里可能存在的概念、术语、人名、作品名、事件；",
-  "文档私有的表述（作者自造的提法、章节编号、这份文件的标题）不要照抄进检索词。",
-  "如果这个问题只关乎文档自身内容、网上不可能有对应资料，就只输出一个字：无"
+  "每条像人在搜索框里输入的那样：关键词或短语组合，一般 3 到 15 个字，不要写成完整句子，不要用疑问句。",
+  "第一条最重要，必须最贴近读者真正想弄清的那件事；后面几条给不同的切入角度，不要只是第一条的近义改写。",
+  "概念有通行译名或英文原名时优先用它，这样更容易搜到实质内容。"
 ].join("\n");
 
 const MAX_WEB_QUERIES = 3;
@@ -265,6 +275,7 @@ export async function composeWebSearchQueries({
   documentTitle = "",
   chapterTitle = "",
   highlightText = "",
+  history = [],
   question = "",
   aiSettings: providedAiSettings,
   signal,
@@ -274,6 +285,16 @@ export async function composeWebSearchQueries({
   const aiSettings = providedAiSettings || settings?.ai || {};
   const startedAt = nowIso();
 
+  // 前几轮问答就是指代还原的依据，缺了它追问类问题提不出检索词
+  const historyText = (Array.isArray(history) ? history : [])
+    .map((item, index) =>
+      [`前第 ${history.length - index} 轮提问：${item?.question || ""}`, item?.answer ? `该轮回答要点：${item.answer}` : ""]
+        .filter(Boolean)
+        .join("\n")
+    )
+    .filter(Boolean)
+    .join("\n\n");
+
   const apiMessages = [
     { role: "system", content: WEB_QUERY_SYSTEM_PROMPT },
     {
@@ -281,12 +302,13 @@ export async function composeWebSearchQueries({
       content: [
         documentTitle ? `读者在读：${documentTitle}` : "",
         chapterTitle ? `当前章节：${chapterTitle}` : "",
+        historyText ? `这轮之前的对话：\n${historyText}` : "",
         highlightText ? `他划出的原文：${String(highlightText).slice(0, 300)}` : "",
-        `他的问题：${question}`,
+        `他现在的问题：${question}`,
         "请给出检索词。"
       ]
         .filter(Boolean)
-        .join("\n")
+        .join("\n\n")
     }
   ];
   const runBase = {
