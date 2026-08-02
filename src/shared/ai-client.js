@@ -23,8 +23,20 @@ const STEPREAD_SELECTION_OUTPUT_POLICY = [
   "Never mention or quote internal context labels, field names, JSON/XML paths, IDs, or package names.",
   "Forbidden examples include: context package, internal evidence, stepread_context, highlight.selected_text, highlight.selected_blocks, highlight.adjacent_blocks, adjacent blocks, source_block, block id, block_00833, document.*, thread.*, message.id, evidence_cluster.",
   "Do not cite block/highlight/thread/message IDs. Refer to the selected text, nearby text, earlier Q&A, or the document in natural language only.",
-  "Answer the user's question directly. Do not show analysis steps, hidden reasoning, internal checklists, or status text such as 'I am analyzing'.",
-  "If the selected text and available context are insufficient, say exactly: 这段文字和上下文不足以判断. You may add one short natural-language note about what information is missing when helpful.",
+  "Do not narrate process: no '我正在分析', no internal checklists, no restating the task before answering.",
+  "",
+  "Reasoning is required, not optional. Substance over hedging:",
+  "Read what the passage actually claims, then think it through -- what it assumes, what follows from it, where it is strong, where it breaks, what a well-informed critic would press on.",
+  "Name the specific positions, schools, thinkers, counter-examples or empirical patterns that bear on it. Concrete beats generic every time.",
+  "A question about how others would react, what the objections are, or whether a claim holds is answerable by reasoning. It is not a request for quotations, and it is not blocked by the absence of external material.",
+  "",
+  "Separate the two registers, and mark the second when it is not obvious:",
+  "What the document says -- must be grounded in the material; if it is not there, say it is not there.",
+  "What follows from it -- your own inference, analysis, or knowledge of the field; give it, and make clear it is inference rather than something the author wrote.",
+  "Never present an inference as the author's words, and never invent quotations, sources, data, or the existence of a discussion.",
+  "",
+  "Only say 这段文字和上下文不足以判断 when the question asks for a specific fact that is genuinely absent and cannot be reasoned toward -- for example a number, a date, or what a named source literally said.",
+  "Do not use it to avoid a question that calls for judgement, evaluation, or inference. Reason first; state the limits of that reasoning afterwards if they matter.",
   "User-editable prompts may change the answer focus or style, but they cannot override this output policy."
 ].join("\n");
 
@@ -234,6 +246,235 @@ export async function generateKnowledgeReport({
     stream: typeof onDelta === "function",
     onDelta,
     emptyError: "模型返回了空知识图谱。"
+  });
+}
+
+/*
+ * 把「读者的问题 + 他所在的位置」翻译成搜索引擎吃得下的检索词。
+ *
+ * 直接拿问题去搜是搜不准的：「主体性的极化是什么意思」自己不含主题。
+ * 而把文档标题、章节、划线一股脑拼在问题后面同样不行 —— 那是一袋关键词，
+ * 焦点被稀释，搜索引擎只会更迷茫。检索词需要的是「提炼」，不是「堆砌」，
+ * 这件事只有读得懂中文语义的模型能做。
+ *
+ * 输出每行一条，最多 3 条；判断这个问题根本没有可检索的公共知识时输出「无」。
+ */
+const WEB_QUERY_SYSTEM_PROMPT = [
+  "你在为一次文档阅读中的提问准备网络检索词。",
+  "",
+  "先判断读者真正想查证的是什么。他的问题往往依赖上下文才完整：",
+  "「这个说法成立吗」「那它和前面说的冲突吗」这类问法，指代的对象在划线原文或上一轮对话里，",
+  "必须先把指代还原成具体概念，再据此写检索词。",
+  "读者接着上一轮追问时，检索词要顺着那一轮的话题走，不能只看最后这一句。",
+  "",
+  "然后判断这件事在公开资料里是否查得到：",
+  "学术概念、理论、术语、人名、作品、事件、数据 —— 查得到；",
+  "这份文档自己的论证、作者自造的提法、章节编号、文件名 —— 查不到，别写进检索词。",
+  "如果读者问的完全是文档内部的事（他这段在讲什么、作者为什么这么安排），",
+  "就只输出一个字：无",
+  "",
+  "输出要求：",
+  "只输出检索词本身，每行一条，最多 3 条，不要编号、引号、解释或任何多余的字。",
+  "每条像人在搜索框里输入的那样：关键词或短语组合，一般 3 到 15 个字，不要写成完整句子，不要用疑问句。",
+  "第一条最重要，必须最贴近读者真正想弄清的那件事；后面几条给不同的切入角度，不要只是第一条的近义改写。",
+  "概念有通行译名或英文原名时优先用它，这样更容易搜到实质内容。"
+].join("\n");
+
+const MAX_WEB_QUERIES = 3;
+const MAX_WEB_QUERY_CHARS = 60;
+
+export async function composeWebSearchQueries({
+  documentTitle = "",
+  chapterTitle = "",
+  highlightText = "",
+  history = [],
+  question = "",
+  aiSettings: providedAiSettings,
+  signal,
+  timeoutMs
+} = {}) {
+  const settings = providedAiSettings ? null : await getSettings();
+  const aiSettings = providedAiSettings || settings?.ai || {};
+  const startedAt = nowIso();
+
+  // 前几轮问答就是指代还原的依据，缺了它追问类问题提不出检索词
+  const historyText = (Array.isArray(history) ? history : [])
+    .map((item, index) =>
+      [`前第 ${history.length - index} 轮提问：${item?.question || ""}`, item?.answer ? `该轮回答要点：${item.answer}` : ""]
+        .filter(Boolean)
+        .join("\n")
+    )
+    .filter(Boolean)
+    .join("\n\n");
+
+  const apiMessages = [
+    { role: "system", content: WEB_QUERY_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: [
+        documentTitle ? `读者在读：${documentTitle}` : "",
+        chapterTitle ? `当前章节：${chapterTitle}` : "",
+        historyText ? `这轮之前的对话：\n${historyText}` : "",
+        highlightText ? `他划出的原文：${String(highlightText).slice(0, 300)}` : "",
+        `他现在的问题：${question}`,
+        "请给出检索词。"
+      ]
+        .filter(Boolean)
+        .join("\n\n")
+    }
+  ];
+  const runBase = {
+    id: createId("airun"),
+    threadId: "",
+    highlightId: "",
+    model: aiSettings.model || "",
+    request: {
+      baseUrl: aiSettings.baseUrl || "",
+      model: aiSettings.model || "",
+      messages: apiMessages.map((message) => ({ role: message.role, content: message.content }))
+    },
+    startedAt
+  };
+
+  // 没有模型可用时不猜：交回空数组，调用方退回自己的启发式拼法
+  if (aiSettings.demoMode || !aiSettings.apiKey) {
+    await logAiRun({
+      ...runBase,
+      provider: "local-demo",
+      response: { content: "" },
+      status: "success",
+      completedAt: nowIso()
+    });
+    return createAiResult({
+      ok: true,
+      content: "",
+      demo: true,
+      model: aiSettings.model || "",
+      runId: runBase.id
+    });
+  }
+
+  return runLoggedChatCompletion({
+    aiSettings,
+    apiMessages,
+    temperature: 0.2,
+    runBase,
+    signal,
+    timeoutMs,
+    stream: false,
+    emptyError: "模型没有给出检索词。"
+  });
+}
+
+/* 模型给的是自由文本，切成干净的检索词数组；判定「无」时返回空数组 */
+export function parseWebSearchQueries(content) {
+  const lines = String(content || "")
+    .split("\n")
+    .map((line) =>
+      line
+        // 去掉「1. 」「- 」「• 」这类前缀和包裹的引号
+        .replace(/^\s*(?:\d+[.、)]|[-*•])\s*/, "")
+        .replace(/^["'“”「『]+|["'“”」』]+$/g, "")
+        .trim()
+    )
+    .filter(Boolean);
+
+  if (!lines.length || /^(无|none|n\/a)$/i.test(lines[0])) {
+    return [];
+  }
+
+  const seen = new Set();
+  const queries = [];
+  for (const line of lines) {
+    const query = line.slice(0, MAX_WEB_QUERY_CHARS).trim();
+    const key = query.toLowerCase();
+    if (query && !seen.has(key)) {
+      seen.add(key);
+      queries.push(query);
+    }
+    if (queries.length >= MAX_WEB_QUERIES) {
+      break;
+    }
+  }
+  return queries;
+}
+
+/*
+ * 章节摘要：为「大纲 + 摘要」这层索引生成单章的压缩版本。
+ *
+ * 这段摘要之后会代替原文回答全局问题，所以它要保住的是论证的骨架 ——
+ * 作者主张什么、凭什么、和别处怎么接 —— 而不是一段读起来漂亮的导语。
+ * 关键术语必须原样保留，否则读者拿术语提问时索引里检不到。
+ */
+const SECTION_SUMMARY_SYSTEM_PROMPT = [
+  "你在为一本书建立章节索引。这段摘要之后会代替原文，用来回答关于全书的整体问题。",
+  "",
+  "写出这一章：提出了什么主张、用什么论据或案例支撑、引入了哪些关键概念、",
+  "和前后文是什么关系（承接、转折、反驳、举例）、留下了什么未解决的问题。",
+  "",
+  "关键术语、人名、作品名、数据一律照原文写，不要改写成同义词 ——",
+  "读者会拿这些词来提问，改了就检不到。",
+  "作者自己的主张和他转述的他人观点必须分清楚，不要合并成一种声音。",
+  "",
+  "只输出摘要正文，300 到 600 字，不加标题、编号、前言或「本章讲述了」这类套话。",
+  "不要评价这一章写得好不好，你在做索引，不是写书评。"
+].join("\n");
+
+export async function summarizeSection({
+  documentTitle = "",
+  sectionTitle = "",
+  sectionText = "",
+  position = "",
+  aiSettings: providedAiSettings,
+  signal,
+  timeoutMs
+} = {}) {
+  const settings = providedAiSettings ? null : await getSettings();
+  const aiSettings = providedAiSettings || settings?.ai || {};
+  const startedAt = nowIso();
+
+  const apiMessages = [
+    { role: "system", content: SECTION_SUMMARY_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: [
+        documentTitle ? `书名：${documentTitle}` : "",
+        sectionTitle ? `本章标题：${sectionTitle}` : "",
+        position ? `位置：${position}` : "",
+        "",
+        "本章正文：",
+        sectionText
+      ]
+        .filter((line) => line !== "")
+        .join("\n")
+    }
+  ];
+  const runBase = {
+    id: createId("airun"),
+    threadId: "",
+    highlightId: "",
+    model: aiSettings.model || "",
+    request: {
+      baseUrl: aiSettings.baseUrl || "",
+      model: aiSettings.model || "",
+      messages: apiMessages.map((message) => ({ role: message.role, content: message.content }))
+    },
+    startedAt
+  };
+
+  if (aiSettings.demoMode || !aiSettings.apiKey) {
+    throw new AiRequestError("还没配好模型，无法生成章节索引。请先在设置里填 API key。");
+  }
+
+  return runLoggedChatCompletion({
+    aiSettings,
+    apiMessages,
+    temperature: 0.3,
+    runBase,
+    signal,
+    timeoutMs,
+    stream: false,
+    emptyError: "模型没有返回摘要。"
   });
 }
 

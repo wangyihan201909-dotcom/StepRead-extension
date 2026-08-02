@@ -15,7 +15,18 @@ import {
 } from "../shared/db.js";
 import { logTask } from "../shared/logger.js";
 import { renderBlocks } from "../shared/block-renderer.js";
-import { answerThread } from "../shared/ai-client.js";
+import {
+  answerThread,
+  composeWebSearchQueries,
+  parseWebSearchQueries,
+  summarizeSection
+} from "../shared/ai-client.js";
+import {
+  clipSectionText,
+  getSectionIndexSignature,
+  getSectionIndexState,
+  splitDocumentIntoSections
+} from "../shared/section-index.js";
 import { normalizeFormulaSelection } from "../shared/formula-text-normalizer.js";
 import { openOrFocusExtensionPage } from "../shared/navigation.js";
 import { saveQaTurnSummary } from "../shared/qa-summary.js";
@@ -84,6 +95,12 @@ const state = {
   roundTree: null,
   // 联网查询是个开关：开着的话每次提问自动检索，不需要先搜再挑
   webSearchEnabled: false,
+  // 出答案之前还有提炼检索词、联网这两步，得让读者看见到底在做什么
+  answerPhase: "",
+  // answerRun 建立之前的那段准备期，靠它认出该给哪一轮画「准备中」
+  pendingQuestionId: "",
+  // 章节索引生成中的那次运行，用来支持中途停止
+  sectionIndexRun: null,
   pathCanvas: { open: false, x: 60, y: 60, scale: 1, boxes: null },
   pdfViewerZoom: 1,
   pdfZoomMode: "fit-width",
@@ -102,7 +119,6 @@ const elements = {
   workspace: document.querySelector("#workspace"),
   documentTitle: document.querySelector("#documentTitle"),
   sourceUrl: document.querySelector("#sourceUrl"),
-  importPdfButton: document.querySelector("#importPdfButton"),
   pdfZoomOutButton: document.querySelector("#pdfZoomOutButton"),
   pdfZoomResetButton: document.querySelector("#pdfZoomResetButton"),
   pdfZoomInButton: document.querySelector("#pdfZoomInButton"),
@@ -110,7 +126,7 @@ const elements = {
   pdfFileInput: document.querySelector("#pdfFileInput"),
   openOptionsButton: document.querySelector("#openOptionsButton"),
   sidebarHead: document.querySelector("#sidebarHead"),
-  newFolderButton: document.querySelector("#newFolderButton"),
+  addDocumentButton: document.querySelector("#addDocumentButton"),
   folderCreateRow: document.querySelector("#folderCreateRow"),
   folderNameInput: document.querySelector("#folderNameInput"),
   confirmFolderButton: document.querySelector("#confirmFolderButton"),
@@ -129,7 +145,6 @@ const elements = {
   leftResizer: document.querySelector("#leftResizer"),
   rightResizer: document.querySelector("#rightResizer"),
   sidebarCollapseButton: document.querySelector("#sidebarCollapseButton"),
-  qaPanelTitle: document.querySelector("#qaPanelTitle"),
   detailLayer: document.querySelector("#detailLayer"),
   knowledgeButton: document.querySelector("#knowledgeButton"),
   clearConversationButton: document.querySelector("#clearConversationButton"),
@@ -146,6 +161,13 @@ const elements = {
   questionInput: document.querySelector("#questionInput"),
   sendQuestionButton: document.querySelector("#sendQuestionButton"),
   voiceInputButton: document.querySelector("#voiceInputButton"),
+  sectionIndexPanel: document.querySelector("#sectionIndexPanel"),
+  sectionIndexState: document.querySelector("#sectionIndexState"),
+  sectionIndexButton: document.querySelector("#sectionIndexButton"),
+  sectionIndexHint: document.querySelector("#sectionIndexHint"),
+  sectionIndexProgress: document.querySelector("#sectionIndexProgress"),
+  sectionIndexBarFill: document.querySelector("#sectionIndexBarFill"),
+  sectionIndexProgressText: document.querySelector("#sectionIndexProgressText"),
   detailBody: document.querySelector("#detailBody"),
   pathRail: document.querySelector("#pathRail"),
   pathRailScroll: document.querySelector("#pathRailScroll"),
@@ -363,9 +385,20 @@ function formatClearSummary(summary) {
 }
 
 function bindEvents() {
-  elements.importPdfButton?.addEventListener("click", async () => {
+  // ＋ 现在就是「添加新文件」；新建文件夹退到右键，属于低频操作
+  elements.addDocumentButton?.addEventListener("click", async () => {
     await discardUnsubmittedDraft({ clearSelection: true, render: true });
     openPdfFilePicker();
+  });
+  elements.addDocumentButton?.addEventListener("contextmenu", (event) =>
+    showDocumentContextMenu(event, { type: "sidebar" })
+  );
+  // 列表空白处右键也给同一个菜单：只在 ＋ 上才有的话没人找得到
+  elements.documentsPanel?.addEventListener("contextmenu", (event) => {
+    if (event.target.closest(".folder-heading, .document-item, .thread-item")) {
+      return;
+    }
+    showDocumentContextMenu(event, { type: "sidebar" });
   });
   elements.pdfFileInput?.addEventListener("change", async (event) => {
     await discardUnsubmittedDraft({ clearSelection: true, render: true });
@@ -381,7 +414,6 @@ function bindEvents() {
       : "src/options/options.html";
     await openOrFocusExtensionPage(optionsPath);
   });
-  elements.newFolderButton.addEventListener("click", showFolderCreator);
   elements.confirmFolderButton.addEventListener("click", createDocumentFolder);
   elements.cancelFolderButton.addEventListener("click", hideFolderCreator);
   elements.folderNameInput.addEventListener("keydown", handleFolderNameKeydown);
@@ -396,6 +428,7 @@ function bindEvents() {
   elements.documentsTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.tocTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.knowledgeButton.addEventListener("click", openKnowledgePage);
+  elements.sectionIndexButton.addEventListener("click", handleSectionIndexButton);
   elements.clearConversationButton.addEventListener("click", handleClearConversation);
   elements.webSearchToggleButton.addEventListener("click", toggleWebSearchEnabled);
   elements.sendQuestionButton.addEventListener("click", handleQuestionButtonClick);
@@ -880,6 +913,7 @@ function renderDocument() {
     renderPdfTextLayerWarning();
   }
   renderToc();
+  renderSectionIndexPanel();
   updateCurrentSectionBar();
 }
 
@@ -2318,8 +2352,8 @@ async function importPdfFromFile(file, options = {}) {
 
 function setPdfImportBusy(isBusy) {
   pdfImportInProgress = Boolean(isBusy);
-  if (elements.importPdfButton) {
-    elements.importPdfButton.disabled = pdfImportInProgress;
+  if (elements.addDocumentButton) {
+    elements.addDocumentButton.disabled = pdfImportInProgress;
   }
 }
 
@@ -4695,7 +4729,7 @@ function clearDocumentLoadClickTimer() {
 
 function showFolderCreator() {
   elements.folderCreateRow.hidden = false;
-  elements.newFolderButton.hidden = true;
+  elements.addDocumentButton.hidden = true;
   elements.folderNameInput.value = "新建文件夹";
   elements.folderNameInput.focus();
   elements.folderNameInput.select();
@@ -4703,7 +4737,7 @@ function showFolderCreator() {
 
 function hideFolderCreator() {
   elements.folderCreateRow.hidden = true;
-  elements.newFolderButton.hidden = false;
+  elements.addDocumentButton.hidden = false;
   elements.folderNameInput.value = "";
   setFolderCreatorBusy(false);
 }
@@ -5080,8 +5114,17 @@ function showDocumentContextMenu(event, target) {
 
   for (const button of elements.documentContextMenu.querySelectorAll("button")) {
     const action = button.dataset.action;
+    // 侧边栏空白处或 ＋ 上右键：这里没有具体条目，只提供新建文件夹
+    if (target.type === "sidebar") {
+      button.hidden = action !== "new-folder";
+      continue;
+    }
     if (target.type === "thread") {
       button.hidden = action !== "delete";
+      continue;
+    }
+    if (action === "new-folder") {
+      button.hidden = true;
       continue;
     }
     button.hidden = target.trashed ? action !== "restore" : action === "restore";
@@ -5111,6 +5154,12 @@ async function handleContextMenuAction(event) {
   event.stopPropagation();
   const target = contextMenuTarget;
   hideDocumentContextMenu();
+
+  if (action === "new-folder") {
+    setSidebarTab("documents");
+    showFolderCreator();
+    return;
+  }
 
   if (action === "rename") {
     if (target.type === "thread") {
@@ -5790,13 +5839,17 @@ function buildRoundElement(round, index, path, fallbackModelLabel, isLast) {
     sources.className = "round-web-sources";
     const lead = document.createElement("span");
     lead.className = "round-web-lead";
-    lead.textContent = "这一问带了联网结果：";
+    // 把实际发出的检索词摆出来：搜得不对时，一眼能看出是词的问题还是结果的问题
+    const queries = [...new Set(webContext.map((item) => item.query).filter(Boolean))];
+    lead.textContent = queries.length ? `联网检索「${queries.join("」「")}」：` : "这一问带了联网结果：";
     sources.append(lead);
     for (const item of webContext) {
       const link = document.createElement(item.url ? "a" : "span");
       link.className = "round-web-source";
       link.textContent = item.source || item.title;
-      link.title = item.title;
+      link.title = [item.title, item.query ? `检索词：${item.query}` : "", Number.isFinite(item.score) ? `相关度：${item.score.toFixed(2)}` : ""]
+        .filter(Boolean)
+        .join("\n");
       if (item.url) {
         link.href = item.url;
         link.target = "_blank";
@@ -5821,8 +5874,11 @@ function buildRoundElement(round, index, path, fallbackModelLabel, isLast) {
   }
   const turnState = getTurnStateForRound(round);
   if (turnState) {
+    // 准备中和生成中共用一张卡：读者看到的是一条连续推进的进度，不是两种状态
     answerHost.append(
-      turnState.status === "running" ? renderStreamingAnswerCard(turnState) : renderTurnStateCard(turnState)
+      turnState.status === "running" || turnState.status === "preparing"
+        ? renderStreamingAnswerCard(turnState)
+        : renderTurnStateCard(turnState)
     );
   }
   main.append(answerHost);
@@ -5963,8 +6019,7 @@ function renderPathRail() {
 
   inner.querySelectorAll(".rail-dot, .fork-badge").forEach((node) => node.remove());
   const tree = state.roundTree;
-  // 一轮都没有时整条路径栏收掉：空栏上挂个展开按钮，点开也只有空画布
-  elements.detailBody?.classList.toggle("rail-empty", !tree?.rounds?.length);
+  // 路径栏常驻：没有对话也把这块地方留着，不然一提问版面就跳一下
   if (!tree?.rounds?.length) {
     elements.pathRailLinks.innerHTML = "";
     inner.style.height = "0px";
@@ -6165,6 +6220,24 @@ function openBranchPop(anchor, round, activeChildIndex) {
 function getTurnStateForRound(round) {
   const message = round.user;
   const activeRun = state.activeAnswerRun;
+
+  /*
+   * 提炼检索词和联网都发生在 answerRun 建立之前。这段时间如果不画卡片，
+   * 界面上就是一片沉默 —— 读者只会以为卡住了。所以先给一张准备中的卡，
+   * 用和流式回答一样的样式，好让「准备 → 生成」看起来是同一件事在推进。
+   */
+  if (state.pendingQuestionId && state.pendingQuestionId === message.id && !round.assistant) {
+    return {
+      status: "preparing",
+      threadId: message.threadId,
+      userMessageId: message.id,
+      question: message.content,
+      model: message.model,
+      streamContent: "",
+      text: state.answerPhase || "正在准备…"
+    };
+  }
+
   if (activeRun?.threadId === message.threadId && activeRun.userMessageId === message.id) {
     return {
       status: "running",
@@ -6261,7 +6334,8 @@ function renderStreamingAnswerCard(turnState) {
   } else {
     const paragraph = document.createElement("p");
     paragraph.className = "message-paragraph message-stream-placeholder";
-    paragraph.textContent = "正在生成回答…";
+    // 出答案前的每一步都报出来，否则读者只看到一段沉默，会以为页面卡死
+    paragraph.textContent = state.answerPhase || "正在生成回答…";
     content.append(paragraph);
   }
 
@@ -6688,25 +6762,47 @@ async function sendQuestion(options = {}) {
   const settingsAtQuestion = await getSettings();
   const aiSettingsAtQuestion = { ...(settingsAtQuestion.ai || {}) };
   const modelAtQuestion = aiSettingsAtQuestion.model || "当前模型";
-  /*
-   * 联网查询开着就直接用这个问题去搜，搜到的全部带上，不再要求逐条勾选。
-   * 手动勾过的优先：🌐 面板仍然可以先搜先挑，那种情况下不再自动覆盖。
-   * 结果依旧会显示在这一轮下面，来源可点，所以「带了什么」仍然看得见。
-   */
-  const webContext = await resolveWebContextForQuestion(question, aiSettingsAtQuestion);
-
   // 以发送这一刻的当前轮作为父轮：当前轮已经有后续时，这里就自然分出一条支线
   // 父轮要在整条对话里算，否则分支会挂错
   const treeBeforeQuestion = buildRounds(await getDocumentMessages());
   const parentRoundId = resolveActiveRoundId(treeBeforeQuestion);
+  /*
+   * 问题先落库先上屏，联网放到后面。
+   * 反过来的话，提炼检索词那次模型调用加上两次搜索请求全都发生在
+   * 界面还是空的时候 —— 读者看到的就是「点了发送，什么都没发生」。
+   */
   const userMessage = await persistUserQuestionMessage({
     question,
     model: modelAtQuestion,
     existingUserMessage: options.userMessage,
     parentId: parentRoundId,
-    webContext
+    webContext: []
   });
   state.activeRoundId = userMessage.id;
+  state.pendingQuestionId = userMessage.id;
+  setAnswerPhase("已收到问题，正在准备…");
+  await renderMessages();
+
+  /*
+   * 联网查询开着就直接用这个问题去搜，搜到的全部带上，不再要求逐条勾选。
+   * 手动勾过的优先：🌐 面板仍然可以先搜先挑，那种情况下不再自动覆盖。
+   * 结果依旧会显示在这一轮下面，来源可点，所以「带了什么」仍然看得见。
+   */
+  const webContext = await resolveWebContextForQuestion(question, aiSettingsAtQuestion, {
+    history: buildRecentQaForQuery(treeBeforeQuestion, parentRoundId)
+  });
+  if (webContext.length) {
+    // 搜完再把结果补回那条问题上，轮次里才看得到来源
+    userMessage.webContext = webContext.map((item) => ({
+      title: item.title,
+      url: item.url,
+      snippet: item.snippet,
+      source: item.source,
+      query: item.query || "",
+      score: Number.isFinite(item.score) ? item.score : null
+    }));
+    await dbPut("messages", userMessage);
+  }
   const answerRun = {
     id: createId("answerRun"),
     controller: new AbortController(),
@@ -6734,6 +6830,9 @@ async function sendQuestion(options = {}) {
   };
 
   state.activeAnswerRun = answerRun;
+  // answerRun 接手之后就由它画卡片，准备期的标记要撤掉
+  state.pendingQuestionId = "";
+  setAnswerPhase("");
   state.editingQuestion = {
     threadId: userMessage.threadId,
     userMessageId: userMessage.id
@@ -6793,6 +6892,9 @@ async function sendQuestion(options = {}) {
     if (state.activeAnswerRun?.id === answerRun.id) {
       state.activeAnswerRun = null;
     }
+    // 任何异常路径都别把「准备中」的卡留在屏幕上转圈
+    state.pendingQuestionId = "";
+    setAnswerPhase("");
     updateSendState();
   }
 }
@@ -6817,7 +6919,15 @@ async function persistUserQuestionMessage({ question, model, existingUserMessage
         // 空串代表这条 thread 的第一轮；重新编辑旧问题时不动它原有的父轮
         parentId,
         // 这一问带了哪些联网结果，存下来才能在轮次里回看来源
-        webContext: webContext.map((item) => ({ title: item.title, url: item.url, snippet: item.snippet, source: item.source })),
+        // query / score 一起存下来：事后回看这一轮时还能知道当时搜的是什么、搜得准不准
+        webContext: webContext.map((item) => ({
+          title: item.title,
+          url: item.url,
+          snippet: item.snippet,
+          source: item.source,
+          query: item.query || "",
+          score: Number.isFinite(item.score) ? item.score : null
+        })),
         content: question,
         model,
         answerStatus: "submitted",
@@ -7403,6 +7513,8 @@ function toggleVoiceInput() {
  */
 const JUNK_DOCUMENT_TITLES = /^(about:blank|untitled|new tab|新标签页|未命名|document)$/i;
 const WEB_QUERY_MAX_CHARS = 200;
+// 模型可能给 3 条，但每条都是一次搜索请求，所以实际只跑前两条
+const WEB_QUERIES_PER_QUESTION = 2;
 const WEB_QUERY_QUESTION_CHARS = 120;
 const WEB_QUERY_PART_CHARS = 50;
 
@@ -7464,7 +7576,7 @@ function buildWebSearchQuery(question) {
   return trimForQuery([asked, ...parts].join(" "), WEB_QUERY_MAX_CHARS);
 }
 
-async function resolveWebContextForQuestion(question, aiSettings) {
+async function resolveWebContextForQuestion(question, aiSettings, options = {}) {
   // 判定完全依据设置本身，state 只用来画按钮，避免两边漂移
   const webSearch = getWebSearchSettings(aiSettings);
   if (!webSearch.enabled) {
@@ -7475,23 +7587,312 @@ async function resolveWebContextForQuestion(question, aiSettings) {
     return [];
   }
 
-  const query = buildWebSearchQuery(question);
-  setStatus("正在联网查询…");
-  try {
-    const results = await searchWeb({ query, aiSettings });
-    if (results.length) {
-      setStatus(`已带上 ${results.length} 条联网结果，来源显示在这一轮下面。`);
-    }
+  const highlight = state.activeHighlight;
+  const documentTitle = getDocumentTopicForSearch();
+  const chapterTitle = getChapterTitleForSearch(highlight);
+
+  setAnswerPhase("正在整理检索词…");
+  setStatus("正在整理检索词…");
+  const plan = await planWebSearchQueries({
+    question,
+    documentTitle,
+    chapterTitle,
+    highlightText: highlight?.text || "",
+    history: options.history || [],
+    aiSettings
+  });
+
+  // 模型判定这一问没有可检索的公共知识时，如实说明，不硬凑几条不相干的结果
+  if (plan.skipped) {
+    setStatus("这个问题只关乎文档本身，网上没有对应资料，这一轮只用文档内容回答。");
     await logTask("web.search.auto", {
       documentId: state.currentDocument?.id || "",
       provider: aiSettings?.webSearch?.provider || "",
-      query,
-      results: results.length
+      queries: [],
+      querySource: plan.source,
+      skipped: true,
+      results: 0
     });
-    return results;
+    return [];
+  }
+
+  setStatus(`正在联网查询：${plan.queries.join(" / ")}`);
+  try {
+    const merged = [];
+    const seenUrls = new Set();
+    for (const [index, query] of plan.queries.entries()) {
+      // 逐条报出来：多条检索词时读者能看出进度在走，而不是停在同一句话上
+      setAnswerPhase(
+        plan.queries.length > 1
+          ? `正在联网检索（${index + 1}/${plan.queries.length}）：${query}`
+          : `正在联网检索：${query}`
+      );
+      const results = await searchWeb({ query, aiSettings });
+      for (const result of results) {
+        const key = result.url || `${query}:${result.title}`;
+        if (seenUrls.has(key)) {
+          continue;
+        }
+        seenUrls.add(key);
+        merged.push({ ...result, query });
+      }
+    }
+
+    const limit = getWebSearchSettings(aiSettings).maxResults;
+    const adopted = merged.slice(0, limit);
+    if (adopted.length) {
+      setStatus(`已带上 ${adopted.length} 条联网结果，来源和检索词显示在这一轮下面。`);
+    } else {
+      setStatus("联网没搜到结果，这一轮只用文档内容回答。");
+    }
+
+    // 排查相关性要看三件事：实际发出的词、每条的分数、哪些真的被采纳了
+    await logTask("web.search.auto", {
+      documentId: state.currentDocument?.id || "",
+      provider: aiSettings?.webSearch?.provider || "",
+      queries: plan.queries,
+      querySource: plan.source,
+      found: merged.length,
+      results: adopted.length,
+      hits: merged.map((item, index) => ({
+        query: item.query,
+        title: item.title,
+        source: item.source,
+        score: item.score,
+        adopted: index < limit
+      }))
+    });
+    return adopted;
   } catch (error) {
     setStatus(`联网查询失败，这一问只用文档内容回答：${getErrorMessage(error)}`);
     return [];
+  }
+}
+
+/* ---------- 章节索引：预编译「大纲 + 每章摘要」，供全书类问题使用 ---------- */
+
+function renderSectionIndexPanel() {
+  const panel = elements.sectionIndexPanel;
+  if (!panel) {
+    return;
+  }
+  const running = Boolean(state.sectionIndexRun);
+  const hasDocument = Boolean(state.currentDocument?.id) && state.blocks.length > 0;
+  panel.hidden = !hasDocument;
+  if (!hasDocument) {
+    return;
+  }
+
+  const { status, done, expected } = getSectionIndexState(state.currentDocument, state.blocks);
+  const labels = {
+    missing: `尚未生成章节索引（${expected} 章）`,
+    stale: `正文有变动，索引已过期（原 ${done} 章）`,
+    ready: `索引已就绪：${done} 章`
+  };
+  elements.sectionIndexState.textContent = running ? "正在生成章节索引…" : labels[status];
+  elements.sectionIndexButton.textContent = running ? "停止" : status === "ready" ? "重新生成" : "生成";
+  elements.sectionIndexButton.disabled = expected === 0 && !running;
+  elements.sectionIndexPanel.dataset.status = running ? "running" : status;
+
+  // 成本要在动手之前讲清楚：这是读者自己的 key，一次通读是笔真实开销
+  elements.sectionIndexHint.textContent = running
+    ? "可以随时停止；已经生成的章节会保留。"
+    : expected === 0
+      ? "这份文档没有可识别的章节标题，无法建立索引。"
+      : `会对 ${expected} 章各发一次模型请求（用你自己的 key）。之后问整本书的问题时只带索引，不必塞全文。`;
+}
+
+function renderSectionIndexProgress(done, total) {
+  if (!elements.sectionIndexProgress) {
+    return;
+  }
+  const active = total > 0 && state.sectionIndexRun;
+  elements.sectionIndexProgress.hidden = !active;
+  if (!active) {
+    return;
+  }
+  elements.sectionIndexBarFill.style.width = `${Math.round((done / total) * 100)}%`;
+  elements.sectionIndexProgressText.textContent = `${done} / ${total} 章`;
+}
+
+async function handleSectionIndexButton() {
+  if (state.sectionIndexRun) {
+    state.sectionIndexRun.cancelled = true;
+    state.sectionIndexRun.controller.abort();
+    setStatus("正在停止生成章节索引…");
+    return;
+  }
+  await generateSectionIndex();
+}
+
+/*
+ * 逐章生成，每章一次请求。串行而不是并发：读者用的是自己的 key，
+ * 并发很容易撞上供应商的速率限制，反而更慢也更容易整批失败。
+ * 每生成一章就落库一次，中途停下或出错时已完成的部分不会白花。
+ */
+async function generateSectionIndex() {
+  if (!state.currentDocument?.id) {
+    setStatus("请先打开一份文档。");
+    return;
+  }
+
+  const sections = splitDocumentIntoSections(state.blocks);
+  if (!sections.length) {
+    setStatus("这份文档没有可识别的章节标题，无法建立索引。");
+    return;
+  }
+
+  const settings = await getSettings();
+  const aiSettings = settings.ai || {};
+  const run = { controller: new AbortController(), cancelled: false };
+  state.sectionIndexRun = run;
+  renderSectionIndexPanel();
+  renderSectionIndexProgress(0, sections.length);
+
+  const documentTitle = getDocumentTopicForSearch() || state.currentDocument.title || "";
+  const finished = [];
+  let failed = 0;
+
+  try {
+    for (const [index, section] of sections.entries()) {
+      if (run.cancelled) {
+        break;
+      }
+      setStatus(`正在生成章节索引：${index + 1} / ${sections.length}　${section.title}`);
+      try {
+        const result = await summarizeSection({
+          documentTitle,
+          sectionTitle: section.title,
+          sectionText: clipSectionText(section.text),
+          position: `第 ${index + 1} 章，共 ${sections.length} 章`,
+          aiSettings,
+          signal: run.controller.signal
+        });
+        if (!result?.ok || !String(result.content || "").trim()) {
+          failed += 1;
+          continue;
+        }
+        finished.push({
+          id: section.id,
+          title: section.title,
+          path: section.path,
+          headingId: section.headingId,
+          startOrder: section.startOrder,
+          endOrder: section.endOrder,
+          summary: String(result.content).trim()
+        });
+        // 每章都存：中途停止时已完成的部分要留下来
+        await persistSectionIndex(finished, sections.length, aiSettings.model || "");
+      } catch (error) {
+        if (run.cancelled) {
+          break;
+        }
+        failed += 1;
+        await logTask("section-index.section-failed", {
+          documentId: state.currentDocument.id,
+          section: section.title,
+          message: getErrorMessage(error)
+        });
+      }
+      renderSectionIndexProgress(finished.length, sections.length);
+    }
+
+    await logTask("section-index.generated", {
+      documentId: state.currentDocument.id,
+      sections: finished.length,
+      expected: sections.length,
+      failed,
+      cancelled: run.cancelled
+    });
+
+    if (run.cancelled) {
+      setStatus(`已停止；保留了 ${finished.length} / ${sections.length} 章的索引。`);
+    } else if (failed) {
+      setStatus(`章节索引生成完毕：成功 ${finished.length} 章，失败 ${failed} 章。可以再点一次重试失败的部分。`);
+    } else {
+      setStatus(`章节索引已生成：${finished.length} 章。之后问整本书的问题会带上它。`);
+    }
+  } finally {
+    state.sectionIndexRun = null;
+    renderSectionIndexPanel();
+    renderSectionIndexProgress(finished.length, sections.length);
+  }
+}
+
+async function persistSectionIndex(sections, expected, model) {
+  const record = {
+    ...state.currentDocument,
+    sectionIndex: {
+      sections,
+      expected,
+      model,
+      // 签名对不上就说明正文换了，界面上会标成「已过期」
+      signature: getSectionIndexSignature(state.blocks),
+      generatedAt: nowIso()
+    },
+    updatedAt: nowIso()
+  };
+  await dbPut("documents", record);
+  state.currentDocument = record;
+}
+
+/*
+ * 阶段提示直接改那个占位段落，不重画整棵树：
+ * 这几步彼此间隔很短，整树重渲染既浪费，也会把滚动位置顶掉。
+ */
+function setAnswerPhase(text) {
+  state.answerPhase = String(text || "");
+  const placeholder = elements.messageList?.querySelector(".message-stream-placeholder");
+  if (placeholder && state.answerPhase) {
+    placeholder.textContent = state.answerPhase;
+  }
+}
+
+/*
+ * 提炼检索词也要看对话语境：读者接着上一轮问「那它和前面说的冲突吗」，
+ * 光看这一句是提不出检索词的 —— 指代的对象在上一轮里。
+ */
+function buildRecentQaForQuery(tree, roundId, limit = 2) {
+  if (!tree || !roundId) {
+    return [];
+  }
+  const path = roundPath(tree, roundId);
+  return path
+    .slice(-limit)
+    .map((round) => ({
+      question: String(round.user?.content || "").slice(0, 200),
+      answer: String(round.assistant?.content || "").slice(0, 300)
+    }))
+    .filter((item) => item.question);
+}
+
+/*
+ * 检索词由模型提炼：把「问题 + 文档主题 + 章节 + 划线」交给它，
+ * 让它还原出读者真正想查的概念。模型不可用或出错时退回本地启发式拼法，
+ * 联网这件事不该因为改写失败就整个歇掉。
+ */
+async function planWebSearchQueries({ question, documentTitle, chapterTitle, highlightText, history, aiSettings }) {
+  const fallback = { queries: [buildWebSearchQuery(question)], source: "heuristic", skipped: false };
+  try {
+    const result = await composeWebSearchQueries({
+      documentTitle,
+      chapterTitle,
+      highlightText,
+      history,
+      question,
+      aiSettings
+    });
+    if (!result?.ok || result.demo) {
+      return fallback;
+    }
+    const queries = parseWebSearchQueries(result.content);
+    if (!queries.length) {
+      // 模型明确答「无」：这是一个判断，不是失败，不该退回硬拼
+      return { queries: [], source: "model", skipped: true };
+    }
+    return { queries: queries.slice(0, WEB_QUERIES_PER_QUESTION), source: "model", skipped: false };
+  } catch (error) {
+    return fallback;
   }
 }
 

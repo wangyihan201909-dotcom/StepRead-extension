@@ -169,10 +169,24 @@ export function buildThreadContext({
     });
   }
   if (contextOptions.chapterTextScope === "full-text") {
-    text = appendOptionalSection(text, "document.full_text_blocks", formatBlocks(parts.fullTextBlocks), {
-      role: "expanded_full_document_context",
-      priority: "3"
-    });
+    /*
+     * 有章节索引就用索引代替全文：一本书的正文动辄二十万 token，
+     * 而「大纲 + 每章摘要」几千 token 就能撑住全局问题，还保得住结构。
+     * 索引是有损的，所以只在这一档用 —— 划线提问那条路径永远是逐字原文。
+     */
+    const sectionIndex = formatSectionIndex(documentRecord);
+    if (sectionIndex) {
+      text = appendOptionalSection(text, "document.section_index", sectionIndex, {
+        role: "compiled_document_map",
+        priority: "3",
+        note: "per-chapter summaries compiled from the full text, not the text itself: use them for structure and cross-chapter reasoning; never quote them as the author's wording"
+      });
+    } else {
+      text = appendOptionalSection(text, "document.full_text_blocks", formatBlocks(parts.fullTextBlocks), {
+        role: "expanded_full_document_context",
+        priority: "3"
+      });
+    }
   }
   if (parts.messages.length) {
     text = appendOptionalSection(text, "thread.current_messages", formatMessages(parts.messages), {
@@ -186,10 +200,15 @@ export function buildThreadContext({
       priority: "5"
     });
   }
-  // 联网结果：读者逐条勾选过才会到这里，来源必须留在包里以便回答时标明出处
+  /*
+   * 联网结果：来源必须留在包里以便回答时标明出处。
+   * 但检索是关键词匹配，搜回来的东西经常和问题无关 —— 必须明确告诉模型
+   * 可以整批不用，否则它会硬把不相干的页面编进回答，那比不联网还糟。
+   */
   text = appendOptionalSection(text, "web.search_results", formatWebResults(webResults), {
     role: "external_web_evidence",
-    priority: "6"
+    priority: "6",
+    note: "keyword search output, not vetted: use only results that actually bear on the question, ignore the rest, and if none are relevant answer without them and do not mention having searched"
   });
   text = appendSection(text, "context.answer_contract", getThreadAnswerContract(), { role: "output_contract" });
   text = wrapContextPackage("question_answer", text);
@@ -776,6 +795,24 @@ function formatSectionSummaries(summaries) {
         normalizeContextText(body)
       ].filter(Boolean).join("\n");
     })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/* 预编译的章节索引：一行标题 + 一段摘要，顺序即全书顺序 */
+function formatSectionIndex(documentRecord) {
+  const sections = Array.isArray(documentRecord?.sectionIndex?.sections)
+    ? documentRecord.sectionIndex.sections
+    : [];
+  return sections
+    .map((section, index) =>
+      [
+        `[chapter index="${index + 1}" title="${escapeAttribute(section?.title || "")}"]`,
+        normalizeContextText(section?.summary || "")
+      ]
+        .filter(Boolean)
+        .join("\n")
+    )
     .filter(Boolean)
     .join("\n\n");
 }
@@ -1379,7 +1416,9 @@ function getThreadAnswerContract() {
     "answer_target: answer the current question, not the whole document.",
     "must_use: primary_evidence when it is relevant.",
     "may_use: local_context, structural_context, and interaction history as supporting evidence.",
-    "uncertainty_rule: if the provided context is insufficient, state what is missing instead of inventing evidence.",
+    "reasoning_rule: questions of judgement, evaluation, objection or implication are answered by reasoning from the evidence plus field knowledge -- not deferred for lack of quotable material.",
+    "grounding_rule: keep claims about what the document says separate from your own inference; mark the inference, never attribute it to the author, never invent sources or data.",
+    "uncertainty_rule: reserve 不足以判断 for a specific absent fact that reasoning cannot reach; otherwise reason first and state the limits afterwards.",
     "language: Chinese unless the user asks otherwise."
   ].join("\n");
 }

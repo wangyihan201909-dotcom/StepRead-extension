@@ -14,7 +14,7 @@
           <p id="sourceUrl" class="source-url"></p>
         </div>
         <nav class="toolbar" aria-label="阅读器操作">
-          <button id="importPdfButton" type="button">打开 PDF</button>
+          <!-- 打开 PDF 移到侧边栏的 ＋：入口和文档列表在一起才说得通 -->
           <div class="pdf-zoom-controls" aria-label="PDF 缩放">
             <button id="pdfZoomOutButton" type="button" class="secondary zoom-button" title="缩小 PDF">-</button>
             <button id="pdfZoomResetButton" type="button" class="secondary zoom-reset-button" title="重置 PDF 缩放">
@@ -40,8 +40,8 @@
                 <span>目录</span>
               </button>
             </div>
-            <!-- 同一个位置：文档页放新建文件夹，目录页放章节数，两边都不留空槽 -->
-            <button id="newFolderButton" class="secondary icon-add-button" type="button" title="新建文件夹" aria-label="新建文件夹">+</button>
+            <!-- 同一个位置：文档页放添加文件，目录页放章节数，两边都不留空槽 -->
+            <button id="addDocumentButton" class="secondary icon-add-button" type="button" title="添加新文件（右键新建文件夹）" aria-label="添加新文件">+</button>
             <small id="tocCount" class="sidebar-tab-count" hidden>0</small>
           </div>
 
@@ -63,6 +63,25 @@
 
           <section id="tocPanel" class="sidebar-panel" role="tabpanel" aria-labelledby="tocTab" hidden>
             <p class="section-help">由标题自动生成，点击后跳转到正文对应位置。</p>
+
+            <!--
+              章节索引：预先给每章生成一段摘要，之后问「全书」类问题时带这份索引，
+              而不是把整本正文塞进上下文。划线提问仍然走原文，不受它影响。
+            -->
+            <div id="sectionIndexPanel" class="section-index" hidden>
+              <div class="section-index-head">
+                <span id="sectionIndexState" class="section-index-state">尚未生成章节索引</span>
+                <button id="sectionIndexButton" class="secondary section-index-button" type="button">生成</button>
+              </div>
+              <p id="sectionIndexHint" class="section-index-hint">
+                为每章生成一段摘要，之后问整本书的问题时只带索引，不必把全文塞进去。
+              </p>
+              <div id="sectionIndexProgress" class="section-index-progress" hidden>
+                <div class="section-index-bar"><span id="sectionIndexBarFill"></span></div>
+                <span id="sectionIndexProgressText" class="section-index-progress-text"></span>
+              </div>
+            </div>
+
             <ol id="tocList" class="toc-list"></ol>
           </section>
         </aside>
@@ -83,10 +102,10 @@
         <div id="rightResizer" class="workspace-resizer right-resizer" role="separator" aria-label="调整问答栏宽度" aria-orientation="vertical" aria-valuemin="260" tabindex="0"></div>
 
         <aside class="qa-panel" aria-label="问答面板">
-          <header class="qa-header">
-            <h2 id="qaPanelTitle">对话</h2>
-          </header>
-
+          <!--
+            原来的标题栏只放着「对话」两个字：这一栏本来就是对话，写一遍是废话。
+            工具按钮早就搬到输入框旁边了，所以整条 header 一起去掉。
+          -->
           <section id="detailLayer" class="qa-layer qa-detail">
             <div id="detailBody" class="detail-body">
               <div id="messageList" class="message-list chat-list"></div>
@@ -154,6 +173,7 @@
 
       <p id="status" class="app-status" role="status"></p>
       <menu id="documentContextMenu" class="context-menu" hidden>
+        <button type="button" data-action="new-folder">新建文件夹</button>
         <button type="button" data-action="rename">重命名</button>
         <button type="button" data-action="delete">删除</button>
         <button type="button" data-action="restore">还原</button>

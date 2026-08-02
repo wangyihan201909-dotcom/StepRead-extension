@@ -289,6 +289,80 @@ h1 {
   line-height: 1.45;
 }
 
+/* 章节索引：目录页顶部的一小块，说明状态并提供生成入口 */
+.section-index {
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-soft);
+}
+
+.section-index[data-status="stale"] {
+  border-color: var(--selection-border);
+  background: var(--selection-bg);
+}
+
+.section-index-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-index-state {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted-strong);
+  font-size: var(--app-small-font-size);
+  font-weight: 650;
+  white-space: normal;
+}
+
+.section-index-button {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: var(--app-xs-font-size);
+}
+
+.section-index-hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: var(--app-xs-font-size);
+  line-height: 1.5;
+}
+
+.section-index-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.section-index-bar {
+  flex: 1 1 auto;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--panel-muted);
+  overflow: hidden;
+}
+
+.section-index-bar span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--primary);
+  transition: width 200ms ease;
+}
+
+.section-index-progress-text {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: var(--app-xs-font-size);
+  font-variant-numeric: tabular-nums;
+}
+
 .sidebar-head {
   flex: 0 0 auto;
   display: flex;
@@ -541,7 +615,8 @@ textarea {
 
 .qa-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  /* 去掉标题栏之后只剩正文一行 */
+  grid-template-rows: minmax(0, 1fr);
   border-left: 1px solid var(--border);
   overflow: hidden;
   box-shadow: none;
@@ -622,35 +697,7 @@ textarea {
   overflow-x: hidden;
 }
 
-/* 改成 flex：按钮增减不再受固定列数约束（原来是三列栅格） */
-.qa-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: -2px 0 14px;
-}
-
-/* 清空对话：待确认状态要明显到不可能误点 */
-.qa-header button.armed {
-  width: auto;
-  padding: 0 9px;
-  border-color: #b42318;
-  background: #b42318;
-  color: #ffffff;
-  font-size: var(--app-xs-font-size);
-}
-
-.qa-header h2 {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.qa-header button {
-  flex: 0 0 auto;
-}
+/* .qa-header 整条去掉了：工具按钮在输入框旁，待确认样式见 .composer-tool.armed */
 
 .knowledge-button {
   min-width: 96px;
@@ -1768,8 +1815,66 @@ figcaption {
   animation: message-stream-cursor 1s steps(2, start) infinite;
 }
 
+/*
+ * 还没有任何流式内容时不要那个光标：占位是块级的，光标会被挤到下一行
+ * 单独杵着，而且和占位自己的圆点重复成两个「正在动」的指示。
+ */
+.message-streaming .message-content:has(.message-stream-placeholder)::after {
+  display: none;
+}
+
+/*
+ * 提炼检索词 + 联网可能要好几秒。静止的一行字看不出系统在动，
+ * 读者会当成卡死；所以给一个一直在走的小点和轻微的明暗呼吸。
+ */
 .message-stream-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   color: var(--muted);
+  animation: placeholder-breathe 1.8s ease-in-out infinite;
+}
+
+.message-stream-placeholder::before {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: placeholder-pulse 1.1s ease-in-out infinite;
+  content: "";
+}
+
+@keyframes placeholder-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.62;
+  }
+}
+
+@keyframes placeholder-pulse {
+  0%,
+  100% {
+    transform: scale(0.7);
+    opacity: 0.45;
+  }
+
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+
+/* 跟随系统的减少动态偏好：需要静止时就只留文字 */
+@media (prefers-reduced-motion: reduce) {
+  .message-stream-placeholder,
+  .message-stream-placeholder::before {
+    animation: none;
+  }
 }
 
 .message-status {
@@ -2035,15 +2140,7 @@ figcaption {
   min-height: 0;
 }
 
-/* 还没有任何一轮对话：路径栏没有内容可画，整列让给正文 */
-.detail-body.rail-empty {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0;
-}
-
-.detail-body.rail-empty .path-rail {
-  display: none;
-}
+/* 路径栏常驻，包括还没有任何一轮对话的时候：位置固定，提问后版面不跳 */
 
 .path-rail {
   display: flex;
