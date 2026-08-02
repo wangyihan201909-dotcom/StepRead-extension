@@ -1,21 +1,26 @@
 :root {
   color-scheme: light;
-  --page-bg: #f6f7f8;
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+  --page-bg: #f7f6f1;
   --panel-bg: #ffffff;
-  --panel-soft: #f2f4f6;
-  --panel-muted: #eceff2;
+  --panel-soft: #f2f0e9;
+  --panel-muted: #eae7dd;
   --panel-raised: #ffffff;
-  --text: #171a1f;
-  --muted: #68717d;
-  --muted-strong: #3d4652;
-  --border: #d9dee5;
-  --control-border: #c7ced6;
-  --primary: #343a42;
+  --text: #1b1a17;
+  --muted: #7b756a;
+  --muted-strong: #4a453d;
+  --border: #e6e2d8;
+  --control-border: #ddd8cc;
+  --primary: #1c1b18;
   --primary-text: #ffffff;
-  --primary-soft: #eceff3;
-  --accent: #5f6873;
-  --shadow: 0 1px 2px rgb(15 23 42 / 5%);
-  --inset-light: inset 0 1px 0 rgb(255 255 255 / 80%);
+  --primary-soft: #f1efe8;
+  --accent: #b5793f;
+  --shadow: 0 1px 2px rgb(28 26 22 / 5%);
+  --inset-light: inset 0 1px 0 rgb(255 255 255 / 70%);
   --reader-font-size: 17px;
   --reader-font-family: Inter, "Segoe UI", system-ui, sans-serif;
   --app-font-scale: 1;
@@ -31,22 +36,22 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page-bg: #05070b;
-  --panel-bg: #0d131d;
-  --panel-soft: #090e16;
-  --panel-muted: #131c2a;
-  --panel-raised: #111927;
-  --text: #edf4ff;
-  --muted: #91a1b7;
-  --muted-strong: #cad6e6;
-  --border: #202c3e;
-  --control-border: #2b3a50;
-  --primary: #8de7ff;
-  --primary-text: #ffffff;
-  --primary-soft: #102637;
-  --accent: #c7a6ff;
-  --shadow: 0 1px 2px rgb(0 0 0 / 28%), 0 18px 44px rgb(0 0 0 / 30%);
-  --inset-light: inset 0 1px 0 rgb(255 255 255 / 7%);
+  --page-bg: #131211;
+  --panel-bg: #1c1b18;
+  --panel-soft: #171614;
+  --panel-muted: #262420;
+  --panel-raised: #201f1b;
+  --text: #f2efe8;
+  --muted: #a09a8e;
+  --muted-strong: #d5cfc3;
+  --border: #2e2b26;
+  --control-border: #3a3630;
+  --primary: #ece7db;
+  --primary-text: #1b1a17;
+  --primary-soft: #2b2823;
+  --accent: #d9a86b;
+  --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 18px 44px rgb(0 0 0 / 30%);
+  --inset-light: inset 0 1px 0 rgb(255 255 255 / 6%);
 }
 
 body {
@@ -87,7 +92,7 @@ h1 {
   padding: 10px;
   overflow-wrap: anywhere;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--panel-raised);
   font-size: var(--app-font-xs);
   line-height: 1.4;
@@ -106,7 +111,7 @@ h1 {
 button {
   min-height: 36px;
   border: 1px solid var(--control-border);
-  border-radius: 4px;
+  border-radius: var(--radius-pill);
   background: var(--primary);
   color: var(--primary-text);
   font: inherit;

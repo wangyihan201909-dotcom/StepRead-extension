@@ -1,5 +1,10 @@
 :root {
   color-scheme: light;
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
   --sidebar-width: 238px;
   --qa-width: 430px;
   --resizer-width: 6px;
@@ -15,23 +20,23 @@
   --app-title-font-size: calc(var(--app-font-size) * 1.45);
   --app-section-title-font-size: calc(var(--app-font-size) * 1.12);
   --document-min-width: 220px;
-  --page-bg: #f6f7f8;
+  --page-bg: #f7f6f1;
   --panel-bg: #ffffff;
-  --panel-soft: #f2f4f6;
-  --panel-muted: #eceff2;
+  --panel-soft: #f2f0e9;
+  --panel-muted: #eae7dd;
   --panel-raised: #ffffff;
-  --text: #171a1f;
-  --muted: #68717d;
-  --muted-strong: #3d4652;
-  --border: #d9dee5;
-  --control-border: #c7ced6;
-  --primary: #343a42;
+  --text: #1b1a17;
+  --muted: #7b756a;
+  --muted-strong: #4a453d;
+  --border: #e6e2d8;
+  --control-border: #ddd8cc;
+  --primary: #1c1b18;
   --primary-text: #ffffff;
-  --primary-soft: #eceff3;
-  --accent: #5f6873;
-  --accent-soft: #f0f2f4;
-  --code-bg: #101722;
-  --code-text: #e8eef3;
+  --primary-soft: #f1efe8;
+  --accent: #b5793f;
+  --accent-soft: #f6efe4;
+  --code-bg: #211f1b;
+  --code-text: #f0ece2;
   --highlight: #d99219;
   --highlight-bg: rgb(217 146 25 / 32%);
   --highlight-border: rgb(166 98 10 / 62%);
@@ -44,17 +49,17 @@
   --pdf-highlight-bg: rgb(217 146 25 / 40%);
   --pdf-highlight-draft-bg: rgb(217 146 25 / 24%);
   --pdf-highlight-active-bg: rgb(217 119 6 / 52%);
-  --selection-bg: #fff8e8;
-  --selection-border: #e1c277;
-  --selection-marker: #b7791f;
-  --chat-bg: #f7f8fa;
+  --selection-bg: #fdf7ec;
+  --selection-border: #e4cb9d;
+  --selection-marker: #b5793f;
+  --chat-bg: #faf9f5;
   --assistant-bg: #ffffff;
-  --user-bg: #f1f3f5;
-  --shadow-soft: 0 1px 2px rgb(15 23 42 / 5%);
-  --shadow-panel: 0 10px 28px rgb(15 23 42 / 8%);
+  --user-bg: #f2f0e9;
+  --shadow-soft: 0 1px 2px rgb(28 26 22 / 5%);
+  --shadow-panel: 0 12px 32px rgb(28 26 22 / 9%);
   --shadow-control: none;
-  --inset-light: inset 0 1px 0 rgb(255 255 255 / 80%);
-  --focus-ring: 0 0 0 2px rgb(52 58 66 / 18%);
+  --inset-light: inset 0 1px 0 rgb(255 255 255 / 70%);
+  --focus-ring: 0 0 0 3px rgb(28 27 24 / 10%);
   font-family: var(--reader-font-family);
   font-size: var(--app-font-size);
   color: var(--text);
@@ -63,23 +68,23 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page-bg: #05070b;
-  --panel-bg: #0d131d;
-  --panel-soft: #090e16;
-  --panel-muted: #131c2a;
-  --panel-raised: #111927;
-  --text: #edf4ff;
-  --muted: #91a1b7;
-  --muted-strong: #cad6e6;
-  --border: #202c3e;
-  --control-border: #2b3a50;
-  --primary: #8de7ff;
-  --primary-text: #ffffff;
-  --primary-soft: #102637;
-  --accent: #c7a6ff;
-  --accent-soft: #251d38;
-  --code-bg: #05080d;
-  --code-text: #e6edf6;
+  --page-bg: #131211;
+  --panel-bg: #1c1b18;
+  --panel-soft: #171614;
+  --panel-muted: #262420;
+  --panel-raised: #201f1b;
+  --text: #f2efe8;
+  --muted: #a09a8e;
+  --muted-strong: #d5cfc3;
+  --border: #2e2b26;
+  --control-border: #3a3630;
+  --primary: #ece7db;
+  --primary-text: #1b1a17;
+  --primary-soft: #2b2823;
+  --accent: #d9a86b;
+  --accent-soft: #2e2820;
+  --code-bg: #0f0e0d;
+  --code-text: #f0ece2;
   --highlight: #f2c66d;
   --highlight-bg: rgb(242 198 109 / 30%);
   --highlight-border: rgb(255 217 128 / 62%);
@@ -92,17 +97,17 @@
   --pdf-highlight-bg: rgb(242 198 109 / 42%);
   --pdf-highlight-draft-bg: rgb(242 198 109 / 24%);
   --pdf-highlight-active-bg: rgb(255 207 92 / 54%);
-  --selection-bg: #191713;
-  --selection-border: #6d592d;
-  --selection-marker: #d0a84a;
-  --chat-bg: #080c13;
-  --assistant-bg: #0f1724;
-  --user-bg: #221f32;
-  --shadow-soft: 0 1px 2px rgb(0 0 0 / 28%), 0 18px 44px rgb(0 0 0 / 34%);
-  --shadow-panel: 0 18px 48px rgb(0 0 0 / 38%);
-  --shadow-control: 0 0 0 1px rgb(141 231 255 / 18%), 0 8px 22px rgb(0 0 0 / 25%);
-  --inset-light: inset 0 1px 0 rgb(255 255 255 / 7%);
-  --focus-ring: 0 0 0 2px rgb(141 231 255 / 22%);
+  --selection-bg: #241f16;
+  --selection-border: #6b5a34;
+  --selection-marker: #d9a86b;
+  --chat-bg: #151412;
+  --assistant-bg: #1c1b18;
+  --user-bg: #232019;
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 30%), 0 18px 44px rgb(0 0 0 / 30%);
+  --shadow-panel: 0 18px 48px rgb(0 0 0 / 42%);
+  --shadow-control: none;
+  --inset-light: inset 0 1px 0 rgb(255 255 255 / 6%);
+  --focus-ring: 0 0 0 3px rgb(236 231 219 / 16%);
 }
 
 * {
@@ -133,12 +138,12 @@ button,
   align-items: center;
   justify-content: center;
   min-height: 36px;
-  padding: 0 12px;
+  padding: 0 14px;
   border: 1px solid var(--control-border);
-  border-radius: 4px;
+  border-radius: var(--radius-pill);
   background: var(--primary);
   color: var(--primary-text);
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
   text-decoration: none;
   white-space: nowrap;
@@ -164,7 +169,7 @@ button.secondary {
   min-height: 22px;
   padding: 0;
   border-color: var(--control-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted-strong);
   font-size: var(--app-small-font-size);
@@ -242,7 +247,7 @@ h1 {
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--control-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--panel-bg);
 }
 
@@ -295,7 +300,7 @@ h1 {
   min-height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted-strong);
   box-shadow: none;
@@ -329,7 +334,7 @@ h1 {
   min-height: 26px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted-strong);
   font-size: var(--app-small-font-size);
@@ -347,7 +352,7 @@ input,
 textarea {
   width: 100%;
   border: 1px solid var(--control-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 9px 10px;
   color: var(--text);
   background: var(--panel-raised);
@@ -478,7 +483,7 @@ textarea {
   min-height: 30px;
   padding: 0;
   border-color: var(--control-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--panel-raised);
   color: var(--muted-strong);
   font-size: var(--app-small-font-size);
@@ -531,7 +536,7 @@ textarea {
   padding: 0 8px;
   gap: 5px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
   font-size: var(--app-small-font-size);
@@ -683,7 +688,7 @@ textarea {
   min-height: 30px;
   padding: 4px 6px 4px 2px;
   border-left: 2px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--muted-strong);
   font-size: var(--app-small-font-size);
   font-weight: 750;
@@ -825,7 +830,7 @@ textarea {
   justify-content: flex-start;
   min-height: 32px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -928,7 +933,7 @@ textarea {
 .pending-document-marker {
   padding: 2px 5px;
   border: 1px solid var(--selection-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--muted-strong);
   background: var(--selection-bg);
   font-size: var(--app-xs-font-size);
@@ -983,7 +988,7 @@ textarea {
   padding: 4px 6px 4px 5px;
   border: 0;
   border-left: 2px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted-strong);
   font-weight: 560;
@@ -1075,7 +1080,7 @@ textarea {
   padding: 18px 20px;
   border: 1px solid var(--border);
   border-left: 4px solid var(--selection-marker);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--panel-raised);
   color: var(--text);
   box-shadow: var(--shadow-soft);
@@ -1125,7 +1130,7 @@ textarea {
   padding: 10px 12px;
   border: 1px solid var(--control-border);
   border-left: 4px solid var(--selection-marker);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--muted-strong);
   background: var(--panel-muted);
   font-size: var(--app-small-font-size);
@@ -1336,7 +1341,7 @@ textarea {
   font-size: var(--reader-font-size);
   line-height: 1.7;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--panel-muted);
   box-shadow: none;
 }
@@ -1377,7 +1382,7 @@ textarea {
   font-size: calc(var(--reader-font-size) * 0.88);
   overflow: auto;
   padding: 14px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--code-bg);
   color: var(--code-text);
   border: 1px solid var(--border);
@@ -1421,7 +1426,7 @@ figure {
 
 figure img {
   max-width: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   box-shadow: none;
 }
 
@@ -1531,7 +1536,7 @@ figcaption {
   min-height: 30px;
   padding: 0 9px;
   border: 1px solid var(--control-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--panel-bg);
   color: var(--text);
   font-size: var(--app-small-font-size);
@@ -1565,7 +1570,7 @@ figcaption {
   align-items: start;
   padding: 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--panel-bg);
   cursor: pointer;
 }
@@ -1715,7 +1720,7 @@ figcaption {
   max-width: min(340px, 78vw);
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: var(--panel-raised);
   box-shadow: var(--shadow-panel);
   color: var(--text);
@@ -1770,7 +1775,7 @@ figcaption {
   margin: 0;
   padding: 10px;
   border: 1px dashed var(--control-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--muted);
   font-size: var(--app-small-font-size);
   line-height: 1.45;
@@ -1782,7 +1787,7 @@ figcaption {
   max-width: 92%;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--assistant-bg);
   box-shadow: var(--shadow-soft);
 }
@@ -1880,7 +1885,7 @@ figcaption {
 .math-inline {
   display: inline;
   padding: 1px 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: var(--panel-muted);
   color: var(--muted-strong);
   white-space: normal;
@@ -1891,7 +1896,7 @@ figcaption {
   overflow-x: auto;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--panel-muted);
   color: var(--muted-strong);
   white-space: pre;
@@ -1899,7 +1904,7 @@ figcaption {
 
 .message-inline-code {
   padding: 1px 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: var(--panel-muted);
   color: var(--muted-strong);
 }
@@ -1910,7 +1915,7 @@ figcaption {
   margin: 0;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--code-bg);
   color: var(--code-text);
   white-space: pre;
@@ -2025,7 +2030,7 @@ figcaption {
   overflow: auto;
   padding: 14px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--chat-bg);
   box-shadow: var(--inset-light);
 }
@@ -2049,7 +2054,7 @@ figcaption {
   flex-direction: column;
   min-width: 0;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--panel-muted);
   overflow: hidden;
   transition: width 0.2s ease, background 0.2s ease;
@@ -2070,7 +2075,7 @@ figcaption {
   min-height: 22px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
   font-size: var(--app-xs-font-size);
@@ -2180,7 +2185,7 @@ figcaption {
   padding: 7px 10px;
   border: 1px solid var(--selection-border);
   border-left: 3px solid var(--selection-marker);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--selection-bg);
   color: var(--muted-strong);
   font-size: var(--app-xs-font-size);
@@ -2207,7 +2212,7 @@ figcaption {
   margin: 0;
   padding: 9px 12px;
   border: 1px solid var(--selection-border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: var(--user-bg);
   color: var(--text);
   font-size: var(--app-small-font-size);
@@ -2531,7 +2536,7 @@ button.fork-badge:hover .fork-num { color: var(--panel-bg); }
   width: 216px;
   padding: 4px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: var(--panel-bg);
   box-shadow: var(--shadow-soft);
   transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
@@ -2555,7 +2560,7 @@ button.fork-badge:hover .fork-num { color: var(--panel-bg); }
   white-space: normal;
   padding: 7px 8px;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -2573,7 +2578,7 @@ button.fork-badge:hover .fork-num { color: var(--panel-bg); }
   margin-top: 2px;
   padding: 0 8px;
   border: 1px dashed var(--control-border);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--muted);
   font-size: var(--app-xs-font-size);
@@ -2724,4 +2729,35 @@ button.fork-badge:hover .fork-num { color: var(--panel-bg); }
   .current-section-bar {
     padding: 7px 12px;
   }
+}
+
+/*
+  kuse 风格收尾：输入区收进一张白卡片，textarea 去掉自己的边框融进卡片，
+  焦点环画在卡片上而不是 textarea 上——整块读起来是一个输入面板。
+*/
+.composer {
+  margin: 0 10px 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-bg);
+  box-shadow: var(--shadow-soft);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.composer:focus-within {
+  border-color: var(--control-border);
+  box-shadow: var(--focus-ring);
+}
+
+.composer #questionInput {
+  padding: 4px 6px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.composer #questionInput:focus {
+  border-color: transparent;
+  box-shadow: none;
+  outline: none;
 }
