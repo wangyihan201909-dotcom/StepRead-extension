@@ -7498,12 +7498,13 @@ function handleSidebarTabKeydown(event) {
   (next === "toc" ? elements.tocTab : elements.documentsTab).focus();
 }
 
-/* 目录被 tab 藏起来时，用计数告诉用户里面有没有东西 */
+/* 章节数占着侧栏头右端那一格，光一个数字没有出处，所以补个 title */
 function updateTocCount(count) {
   if (!elements.tocCount) {
     return;
   }
   elements.tocCount.textContent = String(count);
+  elements.tocCount.title = `共 ${count} 个章节`;
   elements.tocCount.toggleAttribute("hidden", count <= 0);
 }
 
