@@ -81,9 +81,8 @@ const state = {
   sidebarTab: "documents",
   activeRoundId: "",
   roundTree: null,
-  // 联网查询：候选结果与读者勾中的条目（勾中的才会进 prompt）
-  webSearchResults: [],
-  webContextItems: [],
+  // 联网查询是个开关：开着的话每次提问自动检索，不需要先搜再挑
+  webSearchEnabled: false,
   pathCanvas: { open: false, x: 60, y: 60, scale: 1, boxes: null },
   pdfViewerZoom: 1,
   pdfZoomMode: "fit-width",
@@ -133,12 +132,6 @@ const elements = {
   knowledgeButton: document.querySelector("#knowledgeButton"),
   clearConversationButton: document.querySelector("#clearConversationButton"),
   webSearchToggleButton: document.querySelector("#webSearchToggleButton"),
-  webSearchPanel: document.querySelector("#webSearchPanel"),
-  webSearchInput: document.querySelector("#webSearchInput"),
-  webSearchRunButton: document.querySelector("#webSearchRunButton"),
-  webSearchCloseButton: document.querySelector("#webSearchCloseButton"),
-  webSearchStatus: document.querySelector("#webSearchStatus"),
-  webSearchResults: document.querySelector("#webSearchResults"),
   selectionAskButton: document.querySelector("#selectionAskButton"),
   documentsTab: document.querySelector("#documentsTab"),
   tocTab: document.querySelector("#tocTab"),
@@ -230,6 +223,7 @@ async function init() {
   bindEvents();
   applyLayoutState();
   renderSourceUrl();
+  await restoreWebSearchToggle();
   if (state.shouldResetData) {
     await resetLocalReaderDataForManualVerification({
       resetSettings: state.resetDataMode === "all"
@@ -399,15 +393,7 @@ function bindEvents() {
   elements.tocTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.knowledgeButton.addEventListener("click", openKnowledgePage);
   elements.clearConversationButton.addEventListener("click", handleClearConversation);
-  elements.webSearchToggleButton.addEventListener("click", toggleWebSearchPanel);
-  elements.webSearchRunButton.addEventListener("click", runWebSearch);
-  elements.webSearchCloseButton.addEventListener("click", closeWebSearchPanel);
-  elements.webSearchInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      void runWebSearch();
-    }
-  });
+  elements.webSearchToggleButton.addEventListener("click", toggleWebSearchEnabled);
   elements.sendQuestionButton.addEventListener("click", handleQuestionButtonClick);
   elements.voiceInputButton.addEventListener("click", toggleVoiceInput);
   elements.messageList.addEventListener("click", handleMessageListClick);
@@ -5286,14 +5272,9 @@ function renderSelection() {
    * 已发生的轮次各自把划线原文显示在自己那一轮里。
    * 因此它永远可以取消：没有「已保存所以不能删」这种状态。
    */
-  // 勾中的联网结果和划线并列显示：这一问会带上什么，全部摆在输入框上方
-  for (const item of state.webContextItems) {
-    host.append(buildWebContextChip(item));
-  }
-
   const text = state.selectedText || "";
   if (!text) {
-    host.hidden = state.webContextItems.length === 0;
+    host.hidden = true;
     updateSendState();
     return;
   }
@@ -5720,7 +5701,20 @@ async function renderMessages(options = {}) {
   elements.messageList.replaceChildren();
   elements.messageList.classList.add("round-list");
 
-  if (!state.activeThread) {
+  const settings = await getSettings();
+  const fallbackModelLabel = settings.ai?.model || "当前模型";
+  /*
+   * 一个文档只呈现一条对话：把这个文档下所有 thread 的消息合起来按时间成链。
+   * 划线不再「拥有」一条独立问答，它只是某一轮问题上挂的原文。
+   * 存储层仍然是 thread（知识图谱那边照旧），但视图里永远是全部轮次。
+   *
+   * 这里刻意不看 state.activeThread：重新打开一份文档时它必然是 null，
+   * 一旦拿它当渲染前提，历史对话就会整条消失。要显示什么只由「这份文档有哪些消息」决定。
+   */
+  const messages = await getDocumentMessages();
+  const tree = buildRounds(messages);
+
+  if (!tree.roots.length) {
     state.roundTree = null;
     state.activeRoundId = "";
     renderPathRail();
@@ -5731,16 +5725,6 @@ async function renderMessages(options = {}) {
     return;
   }
 
-  const settings = await getSettings();
-  const fallbackModelLabel = settings.ai?.model || "当前模型";
-  /*
-   * 一个文档只呈现一条对话：把这个文档下所有 thread 的消息合起来按时间成链。
-   * 划线不再「拥有」一条独立问答，它只是某一轮问题上挂的原文。
-   * 存储层仍然是 thread（知识图谱那边照旧），但视图里永远是全部轮次 ——
-   * 于是「切换时对话记录消失」这件事从根上不可能再发生。
-   */
-  const messages = await getDocumentMessages();
-  const tree = buildRounds(messages);
   state.roundTree = tree;
   state.activeRoundId = resolveActiveRoundId(tree);
   const path = roundPath(tree, state.activeRoundId);
@@ -6939,10 +6923,6 @@ async function saveSuccessfulAnswer(answerRun, content) {
     state.editingQuestion = null;
   }
   elements.questionInput.value = "";
-  // 这一问的联网条目已经归档到该轮，输入区不再挂着
-  state.webContextItems = [];
-  state.webSearchResults = [];
-  closeWebSearchPanel();
   renderSelection();
   notifyKnowledgeDataChanged("answer-created");
 
@@ -7317,53 +7297,6 @@ async function handleClearConversation() {
   );
 }
 
-/* 勾中的联网结果做成气泡：hover 看摘要，× 撤掉 */
-function buildWebContextChip(item) {
-  const wrap = document.createElement("div");
-  wrap.className = "selection-chip-wrap web-context-chip";
-
-  const chip = document.createElement("button");
-  chip.type = "button";
-  chip.className = "selection-chip";
-  const icon = document.createElement("span");
-  icon.className = "chip-icon";
-  icon.textContent = "🌐";
-  icon.setAttribute("aria-hidden", "true");
-  const label = document.createElement("span");
-  label.textContent = item.source || item.title;
-  chip.append(icon, label);
-  chip.title = item.url || item.title;
-  chip.addEventListener("click", () => {
-    if (item.url) {
-      setStatus(`来源：${item.url}`);
-    }
-  });
-
-  const pop = document.createElement("div");
-  pop.className = "selection-chip-pop";
-  pop.setAttribute("role", "tooltip");
-  const popLabel = document.createElement("span");
-  popLabel.className = "pop-label";
-  popLabel.textContent = `联网结果 · ${item.title}`;
-  const popText = document.createElement("span");
-  popText.className = "pop-text";
-  popText.textContent = item.snippet || item.url || "";
-  pop.append(popLabel, popText);
-
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "selection-chip-close";
-  close.textContent = "×";
-  close.title = "这一问不带这条";
-  close.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleWebContextItem(item, false);
-    renderWebSearchResults();
-  });
-
-  wrap.append(chip, pop, close);
-  return wrap;
-}
 
 /* ---------- 语音输入：识别结果直接落进输入框，发送与否仍由读者决定 ---------- */
 
@@ -7454,14 +7387,15 @@ function toggleVoiceInput() {
 
 /*
  * 这一问要带哪些联网结果：
- * 手动勾过就用勾的那些；否则联网查询开着就直接拿问题去搜，全部带上。
+ * 联网开关关着就一条都不带；开着就直接拿这个问题去搜，搜到的全部带上。
  * 搜索失败不拦提问，只在状态栏说明，这一问退回成纯文档提问。
  */
 async function resolveWebContextForQuestion(question, aiSettings) {
-  if (state.webContextItems.length) {
-    return [...state.webContextItems];
+  if (!state.webSearchEnabled) {
+    return [];
   }
   if (!isWebSearchReady(aiSettings)) {
+    setStatus("联网查询还没配好：去设置里填搜索服务和密钥，这一问先只用文档内容回答。");
     return [];
   }
 
@@ -7483,95 +7417,48 @@ async function resolveWebContextForQuestion(question, aiSettings) {
   }
 }
 
-/* ---------- 联网查询面板：想自己挑的时候用，勾过的优先于自动检索 ---------- */
+/* ---------- 联网查询开关：开着就每次提问自动检索，不再手动搜再挑 ---------- */
 
-function toggleWebSearchPanel() {
-  const willOpen = elements.webSearchPanel.hidden;
-  elements.webSearchPanel.hidden = !willOpen;
-  if (!willOpen) {
-    return;
-  }
-  if (!elements.webSearchInput.value.trim()) {
-    elements.webSearchInput.value = elements.questionInput.value.trim();
-  }
-  elements.webSearchInput.focus();
-}
-
-function closeWebSearchPanel() {
-  elements.webSearchPanel.hidden = true;
-}
-
-async function runWebSearch() {
+/* 开关是读者的长期偏好，不是一次性的；关掉浏览器再打开也该保持原样 */
+async function restoreWebSearchToggle() {
   const settings = await getSettings();
-  const query = elements.webSearchInput.value.trim() || elements.questionInput.value.trim();
-  if (!query) {
-    elements.webSearchStatus.textContent = "先写一个搜索词，或者在下面的输入框里写好问题。";
+  state.webSearchEnabled = Boolean(settings.reader?.webSearchEnabled);
+  renderWebSearchToggle();
+}
+
+async function toggleWebSearchEnabled() {
+  const next = !state.webSearchEnabled;
+  state.webSearchEnabled = next;
+  renderWebSearchToggle();
+
+  const settings = await getSettings();
+  await saveSettings({
+    ...settings,
+    reader: { ...settings.reader, webSearchEnabled: next }
+  });
+
+  if (!next) {
+    setStatus("联网查询已关闭，之后的提问只用文档内容回答。");
     return;
   }
-
-  elements.webSearchRunButton.disabled = true;
-  elements.webSearchStatus.textContent = "正在联网查询…";
-  try {
-    const results = await searchWeb({ query, aiSettings: settings.ai });
-    state.webSearchResults = results;
-    renderWebSearchResults();
-    elements.webSearchStatus.textContent = results.length
-      ? `找到 ${results.length} 条。勾选要带进这一问的，没勾的不会发给模型。`
-      : "没有搜到结果，换个搜索词试试。";
-    await logTask("web.search.performed", {
-      documentId: state.currentDocument?.id || "",
-      provider: settings.ai?.webSearch?.provider || "",
-      results: results.length
-    });
-  } catch (error) {
-    state.webSearchResults = [];
-    renderWebSearchResults();
-    elements.webSearchStatus.textContent = getErrorMessage(error);
-  } finally {
-    elements.webSearchRunButton.disabled = false;
-  }
+  setStatus(
+    isWebSearchReady(settings.ai)
+      ? "联网查询已打开：之后每次提问都会自动检索，来源显示在那一轮下面。"
+      : "联网查询已打开，但还没配搜索服务和密钥；先去设置里填好才会真的检索。"
+  );
 }
 
-function renderWebSearchResults() {
-  const host = elements.webSearchResults;
-  host.replaceChildren();
-  const picked = new Set(state.webContextItems.map((item) => item.url || item.title));
-
-  for (const result of state.webSearchResults) {
-    const key = result.url || result.title;
-    const row = document.createElement("label");
-    row.className = "web-search-result";
-
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.checked = picked.has(key);
-    box.addEventListener("change", () => toggleWebContextItem(result, box.checked));
-
-    const body = document.createElement("span");
-    body.className = "web-search-result-body";
-    const title = document.createElement("span");
-    title.className = "web-search-result-title";
-    title.textContent = result.title;
-    const meta = document.createElement("span");
-    meta.className = "web-search-result-meta";
-    meta.textContent = result.source || result.url || (result.demo ? "占位结果" : "");
-    const snippet = document.createElement("span");
-    snippet.className = "web-search-result-snippet";
-    snippet.textContent = result.snippet;
-    body.append(title, meta, snippet);
-
-    row.append(box, body);
-    host.append(row);
+function renderWebSearchToggle() {
+  const button = elements.webSearchToggleButton;
+  if (!button) {
+    return;
   }
-}
-
-function toggleWebContextItem(result, checked) {
-  const key = result.url || result.title;
-  const rest = state.webContextItems.filter((item) => (item.url || item.title) !== key);
-  state.webContextItems = checked
-    ? [...rest, { title: result.title, url: result.url, snippet: result.snippet, source: result.source }]
-    : rest;
-  renderSelection();
+  const on = state.webSearchEnabled;
+  button.classList.toggle("is-on", on);
+  button.setAttribute("aria-pressed", String(on));
+  button.title = on
+    ? "联网查询已打开：每次提问自动检索。点击关闭"
+    : "联网查询已关闭。点击打开后，每次提问都会自动联网";
 }
 
 async function openKnowledgePage() {

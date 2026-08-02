@@ -56,6 +56,8 @@ export const DEFAULT_SETTINGS = {
     fontFamily: "system",
     preferredFontSize: 17,
     theme: "light",
+    // 联网查询是个开关：打开之后每次提问自动检索，不需要手动搜再挑
+    webSearchEnabled: false,
     documentFolders: []
   },
   knowledgeGraph: {

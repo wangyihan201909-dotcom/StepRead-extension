@@ -23,6 +23,7 @@
             <button id="pdfZoomInButton" type="button" class="secondary zoom-button" title="放大 PDF">+</button>
           </div>
           <input id="pdfFileInput" class="pdf-file-input" type="file" accept="application/pdf,.pdf">
+          <button id="knowledgeButton" type="button" class="secondary knowledge-button">知识图谱</button>
           <button id="openOptionsButton" type="button" class="secondary">设置</button>
         </nav>
       </header>
@@ -82,9 +83,6 @@
         <aside class="qa-panel" aria-label="问答面板">
           <header class="qa-header">
             <h2 id="qaPanelTitle">对话</h2>
-            <button id="webSearchToggleButton" class="icon-button" type="button" title="联网查询：搜到的结果由你勾选后才会带进提问">🌐</button>
-            <button id="clearConversationButton" class="icon-button" type="button" title="清空这份文档的对话记录">🗑</button>
-            <button id="knowledgeButton" type="button" class="secondary knowledge-button">知识图谱</button>
           </header>
 
           <section id="detailLayer" class="qa-layer qa-detail">
@@ -104,22 +102,25 @@
             </div>
 
             <footer class="composer">
-              <div id="webSearchPanel" class="web-search-panel" hidden>
-                <div class="web-search-bar">
-                  <input id="webSearchInput" type="text" placeholder="搜什么？默认用你输入框里的问题" autocomplete="off">
-                  <button id="webSearchRunButton" type="button">搜索</button>
-                  <button id="webSearchCloseButton" type="button" class="secondary" title="收起">×</button>
-                </div>
-                <p id="webSearchStatus" class="web-search-status">勾选要带进这一问的结果；没勾的不会发给模型。</p>
-                <div id="webSearchResults" class="web-search-results"></div>
-              </div>
               <div id="selectionChips" class="selection-chips" hidden></div>
-              <div class="composer-row">
-                <textarea id="questionInput" rows="3" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
-                <div class="composer-buttons">
-                  <button id="voiceInputButton" class="icon-button voice-button" type="button" title="语音输入">🎙</button>
-                  <button id="sendQuestionButton" type="button" disabled>发送</button>
+              <textarea id="questionInput" rows="3" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
+              <!--
+                联网 / 语音 / 清空是同一层级的小工具，所以做成同样大小的图标键，
+                贴着输入框放；发送是唯一的主动作，单独留在右边。
+              -->
+              <div class="composer-actions">
+                <div class="composer-tools">
+                  <button
+                    id="webSearchToggleButton"
+                    class="composer-tool"
+                    type="button"
+                    aria-pressed="false"
+                    title="联网查询：打开后每次提问都会自动联网"
+                  >🌐</button>
+                  <button id="voiceInputButton" class="composer-tool voice-button" type="button" title="语音输入">🎙</button>
+                  <button id="clearConversationButton" class="composer-tool" type="button" title="清空这份文档的对话记录">🗑</button>
                 </div>
+                <button id="sendQuestionButton" type="button" disabled>发送</button>
               </div>
             </footer>
           </section>

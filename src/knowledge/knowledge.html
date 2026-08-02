@@ -9,41 +9,16 @@
   <body>
     <main class="knowledge-shell">
       <!--
-        摘要总览已经由图谱问答的开场问候语承担，所以这里只留一条细标题栏。
-        摘要本身没有删掉，收进右侧的折叠控件里，需要长文时再展开。
+        文字版摘要已经去掉：图谱问答的开场问候语就是这张图的一句话总览，
+        再挂一份长文摘要只是同一件事说两遍。这里只留标题 + 状态。
       -->
-      <section id="summaryPanel" class="knowledge-topbar" data-collapsed="true" aria-labelledby="documentTitle">
+      <section id="summaryPanel" class="knowledge-topbar" aria-labelledby="documentTitle">
         <div class="topbar-heading">
           <p class="eyebrow">StepRead 知识图谱</p>
           <h1 id="documentTitle">正在读取文档...</h1>
         </div>
 
         <p id="status" class="topbar-status" role="status">等待读取知识图谱。</p>
-
-        <div id="summaryStaleBanner" class="summary-stale" hidden>
-          <span id="summaryStaleText">图谱结构已调整，摘要可能已过时。</span>
-          <button id="staleRegenerateButton" type="button" class="link-button">重新生成</button>
-        </div>
-
-        <details id="summaryBody" class="summary-drawer">
-          <summary id="summaryToggle" class="summary-drawer-toggle">文字版摘要</summary>
-          <div class="summary-drawer-body">
-            <p id="summaryMeta" class="summary-meta">摘要是这张图谱的长文版总览；顶部的问候语已经给了一句话版本。</p>
-            <div class="summary-drawer-actions">
-              <button id="regenerateButton" type="button">重新生成摘要</button>
-            </div>
-            <article id="reportOutput" class="report-output">暂无摘要。整理好切片后点击“重新生成摘要”。</article>
-            <details id="summarySettings" class="summary-settings">
-              <summary>生成设置</summary>
-              <label class="field-label" for="userPrompt">本次摘要 prompt</label>
-              <textarea
-                id="userPrompt"
-                rows="4"
-                placeholder="请重点总结我目前已经理解的核心概念、概念之间的推理关系、仍不稳定的地方，以及下一步学习路径。"
-              ></textarea>
-            </details>
-          </div>
-        </details>
       </section>
 
       <div class="knowledge-body">

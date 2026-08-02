@@ -1,10 +1,6 @@
-import { nowIso } from "../shared/defaults.js";
-import { dbGetAllByIndex, dbPut, deleteQaTurnRecords, getDocumentWithBlocks } from "../shared/db.js";
+import { dbGetAllByIndex, deleteQaTurnRecords, getDocumentWithBlocks } from "../shared/db.js";
 import { getSettings } from "../shared/store.js";
-import { generateGraphGreeting, generateKnowledgeReport, suggestEdgeRelation } from "../shared/ai-client.js";
-import { createKnowledgeReportSignature } from "../shared/knowledge-signature.js";
-import { markdownToBlocks } from "../shared/markdown.js";
-import { renderBlocks } from "../shared/block-renderer.js";
+import { generateGraphGreeting, suggestEdgeRelation } from "../shared/ai-client.js";
 import { renderMessageContent } from "../shared/rich-text.js";
 import { openOrFocusExtensionPage } from "../shared/navigation.js";
 import {
@@ -46,11 +42,7 @@ const KNOWLEDGE_REFRESH_KEY = "knowledgeRefreshSignal";
 const KNOWLEDGE_UI_KEY = "knowledgeGraphUi";
 const KNOWLEDGE_REFRESH_DEBOUNCE_MS = 320;
 const KNOWLEDGE_GENERATION_TIMEOUT_MS = 300_000;
-const KNOWLEDGE_GENERATION_STAGES = [
-  { minElapsedSeconds: 0, label: "整理切片与关联" },
-  { minElapsedSeconds: 2, label: "生成结构化摘要" },
-  { minElapsedSeconds: 5, label: "等待模型返回" }
-];
+
 const params = new URLSearchParams(location.search);
 const documentId = params.get("documentId") || "";
 
@@ -67,18 +59,10 @@ const state = {
   selectedNodeId: "",
   selectedEdgeId: "",
   // 摘要不再是页面主角：问候语在图谱问答里，长摘要默认收起
-  summaryCollapsed: true,
   chatCollapsed: false,
   evidenceCollapsed: true
 };
 
-const generationProgress = {
-  timerId: 0,
-  startedAtMs: 0,
-  streamContent: "",
-  streamRenderQueued: false,
-  streamRenderedContent: ""
-};
 
 const undoStack = createUndoStack();
 let knowledgeLoadSeq = 0;
@@ -89,15 +73,6 @@ let graphChat = null;
 const elements = {
   documentTitle: document.querySelector("#documentTitle"),
   summaryPanel: document.querySelector("#summaryPanel"),
-  summaryToggle: document.querySelector("#summaryToggle"),
-  summaryBody: document.querySelector("#summaryBody"),
-  summaryMeta: document.querySelector("#summaryMeta"),
-  summaryStaleBanner: document.querySelector("#summaryStaleBanner"),
-  summaryStaleText: document.querySelector("#summaryStaleText"),
-  staleRegenerateButton: document.querySelector("#staleRegenerateButton"),
-  regenerateButton: document.querySelector("#regenerateButton"),
-  userPrompt: document.querySelector("#userPrompt"),
-  reportOutput: document.querySelector("#reportOutput"),
   status: document.querySelector("#status"),
   evidenceDrawer: document.querySelector("#evidenceDrawer"),
   evidenceToggle: document.querySelector("#evidenceToggle"),
@@ -176,7 +151,6 @@ function init() {
     callbacks: {
       getGraphContext: () => ({
         documentRecord: state.documentRecord,
-        report: state.documentRecord?.knowledgeReport?.content || "",
         nodes: getGraphNodes(),
         edges: getGraphEdges(),
         settings: state.settings
@@ -187,7 +161,6 @@ function init() {
   });
 
   bindToolbar();
-  bindSummaryPanel();
   bindNodeDetail();
   bindEdgePopover();
   bindExternalRefresh();
@@ -210,13 +183,7 @@ function bindToolbar() {
   document.addEventListener("keydown", handleGlobalKeydown);
 }
 
-function bindSummaryPanel() {
-  // 摘要现在是 <details>，展开与否以它自己的 open 为准
-  elements.summaryBody.addEventListener("toggle", () => setSummaryCollapsed(!elements.summaryBody.open));
-  elements.regenerateButton.addEventListener("click", handleGenerateReport);
-  elements.staleRegenerateButton.addEventListener("click", handleGenerateReport);
-  elements.userPrompt.addEventListener("input", () => void refreshSummaryFreshness());
-}
+
 
 function bindNodeDetail() {
   elements.nodeDetailClose.addEventListener("click", closeNodeDetail);
@@ -318,8 +285,7 @@ async function loadKnowledgeData(options = {}) {
   }
 
   const loadSeq = ++knowledgeLoadSeq;
-  const generating = isKnowledgeGenerating();
-  setBusy(true, generating ? "" : options.external ? "阅读记录已更新，正在同步图谱..." : "正在读取阅读记录...");
+  setBusy(true, options.external ? "阅读记录已更新，正在同步图谱..." : "正在读取阅读记录...");
   try {
     const [{ document, blocks }, highlights, threads, summaries, settings, graph] = await Promise.all([
       getDocumentWithBlocks(documentId),
@@ -380,15 +346,11 @@ async function loadKnowledgeData(options = {}) {
       graphChat.renderFocusList();
     }
 
-    if (!isKnowledgeGenerating()) {
-      await renderCachedReportState();
-    }
   } catch (error) {
     if (loadSeq !== knowledgeLoadSeq) {
       return;
     }
     setStatus(error instanceof Error ? error.message : String(error));
-    elements.reportOutput.textContent = "读取失败。";
   } finally {
     if (loadSeq === knowledgeLoadSeq) {
       setBusy(false);
@@ -588,7 +550,6 @@ async function handleEvidenceDrop(sourceKey, graphPoint) {
   state.nodes = [...state.nodes, node];
   renderGraph();
   renderEvidenceList();
-  await refreshSummaryFreshness();
   setStatus("已放置切片。从卡片右侧圆点拖到另一张卡片就能建立关联。");
 }
 
@@ -686,7 +647,6 @@ async function handleUndo() {
   closeEdgePopover();
   renderGraph();
   renderEvidenceList();
-  await refreshSummaryFreshness();
   setStatus("已撤销上一步图谱调整。");
 }
 
@@ -716,7 +676,6 @@ async function handleConnect(fromNodeId, toNodeId, clientPoint) {
   state.edges = [...state.edges, edge];
   renderGraph();
   openEdgePopover(edge.id, clientPoint);
-  await refreshSummaryFreshness();
   setStatus("已新建关联，填写关联说明可以让摘要更准确。");
 }
 
@@ -730,7 +689,6 @@ async function handleCanvasDoubleClick(graphPoint) {
   openNodeDetail(node.id);
   elements.nodeDetailTitleInput.focus();
   elements.nodeDetailTitleInput.select();
-  await refreshSummaryFreshness();
   setStatus("已新建手动切片，填写内容后记得保存。");
 }
 
@@ -783,7 +741,6 @@ async function handleAddChatAnswerToGraph({ question, answer, model }) {
 
   renderGraph();
   renderEvidenceList();
-  await refreshSummaryFreshness();
   return node;
 }
 
@@ -865,7 +822,6 @@ async function handleSaveNodeEdits() {
   renderGraph();
   renderEvidenceList();
   openNodeDetail(node.id);
-  await refreshSummaryFreshness();
   setStatus("切片已保存。");
 }
 
@@ -885,7 +841,6 @@ async function handleConvertToNote() {
   renderGraph();
   renderEvidenceList();
   openNodeDetail(converted.id);
-  await refreshSummaryFreshness();
   setStatus("已转为手动切片：与已删除的阅读记录脱钩，手动建立的连线保持不变。");
 }
 
@@ -908,7 +863,6 @@ async function handleDeleteNode() {
   renderGraph();
   renderEvidenceList();
   graphChat.pruneFocusNodes(getGraphNodes().map((item) => item.id));
-  await refreshSummaryFreshness();
   setStatus(
     node.kind === "qa"
       ? "已从图谱中移除这个切片，阅读器里的划线和问答记录仍然保留。"
@@ -976,7 +930,6 @@ async function handleSaveEdge() {
   state.edges = state.edges.map((item) => (item.id === updated.id ? updated : item));
   closeEdgePopover();
   renderGraph();
-  await refreshSummaryFreshness();
   setStatus("关联已保存，摘要重新生成时会优先采信它。");
 }
 
@@ -997,7 +950,6 @@ async function handleReverseEdge() {
   state.edges = state.edges.map((item) => (item.id === updated.id ? updated : item));
   renderGraph();
   openEdgePopover(updated.id, null);
-  await refreshSummaryFreshness();
 }
 
 async function handleDeleteEdge() {
@@ -1013,148 +965,19 @@ async function handleDeleteEdge() {
     : state.edges.map((item) => (item.id === edge.id ? result.edge : item));
   closeEdgePopover();
   renderGraph();
-  await refreshSummaryFreshness();
   setStatus(result.deleted ? "关联已删除。" : "已删除这条自动关联，同步阅读记录时不会再生成它。");
 }
 
-/* ------------------------------------------------------------------ summary */
 
-async function renderCachedReportState() {
-  const report = state.documentRecord?.knowledgeReport;
-  if (!report?.content) {
-    elements.reportOutput.textContent = "暂无摘要。整理好切片后点击“重新生成摘要”。";
-    elements.summaryMeta.textContent = "摘要是这张图谱的文字版总览。";
-    setStatus("已读取阅读记录，尚未生成摘要。");
-    setSummaryStale(false);
-    return;
-  }
 
-  if (!elements.userPrompt.value && report.userPrompt) {
-    elements.userPrompt.value = report.userPrompt;
-  }
-  renderReportMarkdown(report.content);
-  elements.summaryMeta.textContent = `摘要生成时间：${formatDateTime(report.generatedAt)}`;
 
-  const fresh = await refreshSummaryFreshness();
-  setStatus(fresh ? "当前图谱与摘要一致。" : "图谱内容已变化，可在顶部重新生成摘要。");
-}
 
-function renderReportMarkdown(markdown) {
-  elements.reportOutput.classList.remove("report-output-streaming");
-  const blocks = markdownToBlocks(markdown, documentId);
-  renderBlocks(elements.reportOutput, blocks);
-}
 
-/** Returns true when the cached summary still matches the current graph. */
-async function refreshSummaryFreshness() {
-  const report = state.documentRecord?.knowledgeReport;
-  if (!report?.content) {
-    setSummaryStale(false);
-    return true;
-  }
 
-  const signature = await createCurrentSignature();
-  const fresh = report.signature === signature;
-  setSummaryStale(!fresh);
-  return fresh;
-}
 
-function setSummaryStale(isStale) {
-  elements.summaryStaleBanner.hidden = !isStale;
-  elements.summaryPanel.classList.toggle("is-stale", isStale);
-}
 
-async function handleGenerateReport() {
-  if (!state.documentRecord) {
-    setStatus("还没有可生成摘要的阅读记录。");
-    return;
-  }
 
-  const signature = await createCurrentSignature();
-  const cachedReport = state.documentRecord.knowledgeReport;
-  if (cachedReport?.signature === signature && cachedReport?.content) {
-    renderReportMarkdown(cachedReport.content);
-    setSummaryStale(false);
-    setStatus(`图谱没有变化，已显示缓存摘要，生成时间：${formatDateTime(cachedReport.generatedAt)}。`);
-    return;
-  }
 
-  setSummaryCollapsed(false);
-  setBusy(true);
-  startKnowledgeGenerationTimer();
-  resetKnowledgeStreamPreview();
-  try {
-    const result = await generateKnowledgeReport({
-      documentRecord: state.documentRecord,
-      blocks: state.blocks,
-      highlights: state.highlights,
-      threads: state.threads,
-      messagesByThread: state.messagesByThread,
-      summaries: state.summaries,
-      userPrompt: elements.userPrompt.value,
-      graph: createGraphSignaturePayload({ nodes: getGraphNodes(), edges: getGraphEdges() }),
-      timeoutMs: KNOWLEDGE_GENERATION_TIMEOUT_MS,
-      onDelta: appendKnowledgeReportDelta
-    });
-
-    if (!result.ok) {
-      const elapsedSeconds = stopKnowledgeGenerationTimer();
-      restoreKnowledgeReportAfterFailedStream(cachedReport);
-      if (result.cancelled) {
-        setStatus(`摘要生成已取消，最终耗时：${formatElapsedSeconds(elapsedSeconds)}。未覆盖上次缓存结果。`);
-        return;
-      }
-      const reason = result.error || "模型请求没有成功";
-      setStatus(`摘要生成失败，最终耗时：${formatElapsedSeconds(elapsedSeconds)}。${reason}。未覆盖上次缓存结果。`);
-      return;
-    }
-
-    const savedAt = nowIso();
-    const nextDocument = {
-      ...state.documentRecord,
-      knowledgeReport: {
-        signature,
-        userPrompt: elements.userPrompt.value,
-        content: result.content,
-        ai: {
-          runId: result.runId || "",
-          model: result.model || "",
-          demo: Boolean(result.demo)
-        },
-        generatedAt: savedAt
-      }
-    };
-    await dbPut("documents", nextDocument);
-    state.documentRecord = nextDocument;
-    renderReportMarkdown(result.content);
-    elements.summaryMeta.textContent = `摘要生成时间：${formatDateTime(savedAt)}`;
-    setSummaryStale(false);
-    const elapsedSeconds = stopKnowledgeGenerationTimer();
-    setStatus(`摘要已生成，时间：${formatDateTime(savedAt)}，最终耗时：${formatElapsedSeconds(elapsedSeconds)}。`);
-  } catch (error) {
-    const elapsedSeconds = stopKnowledgeGenerationTimer();
-    restoreKnowledgeReportAfterFailedStream(cachedReport);
-    const reason = error instanceof Error ? error.message : String(error);
-    setStatus(`摘要生成失败，最终耗时：${formatElapsedSeconds(elapsedSeconds)}。${reason}。未覆盖上次缓存结果。`);
-  } finally {
-    stopKnowledgeGenerationTimer();
-    setBusy(false);
-  }
-}
-
-async function createCurrentSignature() {
-  const settings = await getLatestSettings();
-  return createKnowledgeReportSignature({
-    documentRecord: state.documentRecord,
-    highlights: state.highlights,
-    threads: state.threads,
-    messagesByThread: state.messagesByThread,
-    summaries: state.summaries,
-    userPrompt: elements.userPrompt.value,
-    graph: createGraphSignaturePayload({ nodes: getGraphNodes(), edges: getGraphEdges() }),
-    settings
-  });
-}
 
 async function getLatestSettings() {
   try {
@@ -1176,7 +999,6 @@ function restoreUiState() {
 
   storage.get(KNOWLEDGE_UI_KEY).then((result) => {
     const ui = result?.[KNOWLEDGE_UI_KEY] || {};
-    state.summaryCollapsed = Boolean(ui.summaryCollapsed);
     state.chatCollapsed = Boolean(ui.chatCollapsed);
     state.evidenceCollapsed = ui.evidenceCollapsed !== false;
     applyUiState();
@@ -1187,7 +1009,6 @@ function persistUiState() {
   const storage = globalThis.chrome?.storage?.local;
   const result = storage?.set({
     [KNOWLEDGE_UI_KEY]: {
-      summaryCollapsed: state.summaryCollapsed,
       chatCollapsed: state.chatCollapsed,
       evidenceCollapsed: state.evidenceCollapsed
     }
@@ -1196,10 +1017,6 @@ function persistUiState() {
 }
 
 function applyUiState() {
-  elements.summaryPanel.dataset.collapsed = String(state.summaryCollapsed);
-  if (elements.summaryBody.open === state.summaryCollapsed) {
-    elements.summaryBody.open = !state.summaryCollapsed;
-  }
   elements.chatPanel.dataset.collapsed = String(state.chatCollapsed);
   elements.chatCollapseButton.setAttribute("aria-expanded", String(!state.chatCollapsed));
   elements.chatCollapseButton.title = state.chatCollapsed ? "展开问答窗口" : "收起问答窗口";
@@ -1207,11 +1024,7 @@ function applyUiState() {
   elements.evidenceToggle.setAttribute("aria-expanded", String(!state.evidenceCollapsed));
 }
 
-function setSummaryCollapsed(collapsed) {
-  state.summaryCollapsed = collapsed;
-  applyUiState();
-  persistUiState();
-}
+
 
 function setChatCollapsed(collapsed) {
   state.chatCollapsed = collapsed;
@@ -1242,61 +1055,18 @@ function isTypingTarget(target) {
   return tagName === "INPUT" || tagName === "TEXTAREA" || target?.isContentEditable;
 }
 
-/* ------------------------------------------------------- generation progress */
 
-function resetKnowledgeStreamPreview() {
-  generationProgress.streamContent = "";
-  generationProgress.streamRenderedContent = "";
-  generationProgress.streamRenderQueued = false;
-  elements.reportOutput.classList.add("report-output-streaming");
-  elements.reportOutput.textContent = "正在等待模型开始输出摘要...";
-}
 
-function appendKnowledgeReportDelta(delta) {
-  const chunk = String(delta || "");
-  if (!chunk) {
-    return;
-  }
-  generationProgress.streamContent = `${generationProgress.streamContent || ""}${chunk}`;
-  queueKnowledgeStreamPreviewRender();
-}
 
-function queueKnowledgeStreamPreviewRender() {
-  if (generationProgress.streamRenderQueued) {
-    return;
-  }
-  generationProgress.streamRenderQueued = true;
-  requestAnimationFrame(() => {
-    generationProgress.streamRenderQueued = false;
-    renderKnowledgeStreamPreview();
-  });
-}
 
-function renderKnowledgeStreamPreview() {
-  const content = String(generationProgress.streamContent || "");
-  if (content === generationProgress.streamRenderedContent) {
-    return;
-  }
-  generationProgress.streamRenderedContent = content;
-  elements.reportOutput.textContent = content || "正在等待模型开始输出摘要...";
-}
 
-function restoreKnowledgeReportAfterFailedStream(cachedReport) {
-  generationProgress.streamContent = "";
-  generationProgress.streamRenderedContent = "";
-  generationProgress.streamRenderQueued = false;
-  elements.reportOutput.classList.remove("report-output-streaming");
-  if (cachedReport?.content) {
-    renderReportMarkdown(cachedReport.content);
-    return;
-  }
-  elements.reportOutput.textContent = "暂无可用的摘要。生成中断后已丢弃临时流式内容，请再次生成。";
-}
+
+
+
+
 
 function setBusy(isBusy, message = "") {
-  const locked = isBusy || isKnowledgeGenerating() || !documentId;
-  elements.regenerateButton.disabled = locked;
-  elements.staleRegenerateButton.disabled = locked;
+  const locked = isBusy || !documentId;
   elements.reloadButton.disabled = locked;
   if (message) {
     setStatus(message);
@@ -1307,46 +1077,11 @@ function setStatus(message) {
   elements.status.textContent = message;
 }
 
-function isKnowledgeGenerating() {
-  return Boolean(generationProgress.timerId || generationProgress.startedAtMs);
-}
 
-function startKnowledgeGenerationTimer() {
-  stopKnowledgeGenerationTimer();
-  generationProgress.startedAtMs = Date.now();
-  updateKnowledgeGenerationStatus();
-  generationProgress.timerId = globalThis.setInterval(updateKnowledgeGenerationStatus, 1000);
-}
 
-function stopKnowledgeGenerationTimer() {
-  const elapsedSeconds = getKnowledgeGenerationElapsedSeconds();
-  if (generationProgress.timerId) {
-    globalThis.clearInterval(generationProgress.timerId);
-    generationProgress.timerId = 0;
-  }
-  generationProgress.startedAtMs = 0;
-  return elapsedSeconds;
-}
 
-function updateKnowledgeGenerationStatus() {
-  const elapsedSeconds = getKnowledgeGenerationElapsedSeconds();
-  const startedAt = formatRunStartTime(generationProgress.startedAtMs);
-  const stage = getKnowledgeGenerationStage(elapsedSeconds);
-  setStatus(`正在生成摘要。开始时间：${startedAt}；已用：${formatElapsedSeconds(elapsedSeconds)}；阶段：${stage}。`);
-}
 
-function getKnowledgeGenerationElapsedSeconds() {
-  if (!generationProgress.startedAtMs) {
-    return 0;
-  }
-  return Math.max(0, Math.floor((Date.now() - generationProgress.startedAtMs) / 1000));
-}
 
-function getKnowledgeGenerationStage(elapsedSeconds) {
-  return KNOWLEDGE_GENERATION_STAGES.reduce((current, stage) => {
-    return elapsedSeconds >= stage.minElapsedSeconds ? stage.label : current;
-  }, KNOWLEDGE_GENERATION_STAGES[0].label);
-}
 
 /* ------------------------------------------------------------------- helpers */
 
@@ -1370,28 +1105,7 @@ function createSnippet(text, limit = 120) {
   return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized;
 }
 
-function formatElapsedSeconds(seconds) {
-  return `${Math.max(0, Number(seconds) || 0)} 秒`;
-}
 
-function formatRunStartTime(value) {
-  if (!value) {
-    return "未知";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "未知";
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  }).format(date);
-}
 
 function formatDateTime(value) {
   if (!value) {

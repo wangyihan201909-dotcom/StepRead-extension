@@ -1514,104 +1514,6 @@ figcaption {
   min-width: 0;
 }
 
-/* ---------- 联网查询：结果先列出来勾选，勾中的才会进 prompt ---------- */
-.web-search-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-raised);
-}
-
-.web-search-bar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 6px;
-}
-
-.web-search-bar input {
-  min-width: 0;
-  min-height: 30px;
-  padding: 0 9px;
-  border: 1px solid var(--control-border);
-  border-radius: var(--radius-sm);
-  background: var(--panel-bg);
-  color: var(--text);
-  font-size: var(--app-small-font-size);
-}
-
-.web-search-bar button {
-  min-height: 30px;
-  padding: 0 10px;
-  font-size: var(--app-xs-font-size);
-}
-
-.web-search-status {
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--app-xs-font-size);
-  line-height: 1.5;
-}
-
-.web-search-results {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
-  max-height: 220px;
-  overflow-y: auto;
-}
-
-.web-search-result {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 8px;
-  align-items: start;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--panel-bg);
-  cursor: pointer;
-}
-
-.web-search-result:hover {
-  border-color: var(--control-border);
-}
-
-.web-search-result-body {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.web-search-result-title {
-  color: var(--text);
-  font-size: var(--app-small-font-size);
-  font-weight: 650;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.web-search-result-meta {
-  color: var(--muted);
-  font-size: var(--app-xs-font-size);
-  overflow-wrap: anywhere;
-}
-
-.web-search-result-snippet {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  color: var(--muted-strong);
-  font-size: var(--app-xs-font-size);
-  line-height: 1.5;
-}
-
-.web-context-chip .selection-chip {
-  max-width: 150px;
-}
 
 /* 某一轮当时带过的联网来源 */
 .round-web-sources {
@@ -1953,8 +1855,11 @@ figcaption {
 }
 
 #sendQuestionButton {
+  flex: 0 0 auto;
   width: auto;
-  min-width: 68px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 16px;
 }
 
 #sendQuestionButton.stop-button {
@@ -1966,32 +1871,71 @@ figcaption {
 .composer {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  background: var(--panel-soft);
-}
-
-.composer-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-}
-
-.composer-buttons {
-  display: flex;
-  flex-direction: column;
   gap: 6px;
-  align-items: stretch;
+}
+
+/*
+ * 工具条压在卡片内部下沿（kuse 的做法）：左边一排同等大小的小图标，
+ * 右边只留发送这一个主动作。发送保留文字是因为它有「发送 / 重新发送 / 停止」
+ * 三种含义不同的状态，换成箭头图标就分不出来了。
+ */
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.composer-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* 联网 / 语音 / 清空是同一层级：一样大、一样低调，不抢输入框的注意力 */
+.composer-tool {
+  width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  /* 盒子小、字号不能跟着小到认不出图形，14px 是 emoji 还能辨形的下限 */
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+/* 只有「确认清空」这种文字态才回到正常小字号 */
+.composer-tool.armed {
+  font-size: var(--app-small-font-size);
+}
+
+.composer-tool:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--panel-soft);
+  color: var(--text);
+  box-shadow: none;
+}
+
+/* 联网开着必须一眼看得出来，否则不知道这一问会不会走网络 */
+.composer-tool.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* 清空进入二次确认后会变成文字，宽度要放开 */
+.composer-tool.armed {
+  width: auto;
+  padding: 0 10px;
+  background: var(--selection-bg);
+  color: var(--selection-marker);
+  font-weight: 600;
 }
 
 /* 语音输入：录音时要一眼看出来还在听 */
-.voice-button {
-  width: auto;
-  min-width: 68px;
-  min-height: 30px;
-}
-
 .voice-button.recording {
   border-color: #b42318;
   background: #b42318;

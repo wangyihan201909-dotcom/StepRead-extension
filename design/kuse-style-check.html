@@ -2,21 +2,79 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8">
-    <title>StepRead · kuse 风格核对</title>
+    <title>StepRead · 布局核对</title>
+    <link rel="stylesheet" href="../src/reader/reader.css?v=c9">
     <style>
-      body { margin: 0; padding: 16px; background: #ddd; font: 12px system-ui; }
-      .lbl { color: #555; margin: 12px 0 6px; font-weight: 600; }
-      iframe { width: 100%; border: 1px solid #999; background: #fff; display: block; }
+      body { overflow: auto; height: auto; padding: 20px; }
+      .harness-label { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+      .harness-col { width: 430px; border: 1px dashed var(--control-border); }
+      .qa-panel { display: flex; flex-direction: column; height: 420px; background: var(--chat-bg); }
+      .message-list { flex: 1; overflow: auto; padding: 10px; display: grid;
+                      grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; }
+      .row { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
     </style>
   </head>
   <body>
-    <p class="lbl">知识图谱页 knowledge.html</p>
-    <iframe src="../src/knowledge/knowledge.html?v=k1" height="620"></iframe>
+    <div class="row">
+      <div>
+        <p class="harness-label">问答栏（430px）· 工具键贴着输入框</p>
+        <div class="harness-col">
+          <section class="qa-panel">
+            <header class="qa-header"><h2>对话</h2></header>
+            <div class="message-list">
+              <div class="round"><div class="round-main">
+                <button class="round-quote" type="button">这是一段被划线的原文，用来确认长文本正常换行、不会把整列撑宽。</button>
+                <p>位置编码具体怎么加进去？</p>
+              </div></div>
+            </div>
+            <footer class="composer">
+              <div class="selection-chips"><span class="selection-chip">1 条划线 · 36 字</span></div>
+              <textarea id="questionInput" rows="3" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
+              <div class="composer-actions">
+                <div class="composer-tools">
+                  <button class="composer-tool is-on" type="button" aria-pressed="true" title="联网查询已打开">🌐</button>
+                  <button class="composer-tool voice-button" type="button" title="语音输入">🎙</button>
+                  <button class="composer-tool" type="button" title="清空对话记录">🗑</button>
+                </div>
+                <button id="sendQuestionButton" type="button">发送</button>
+              </div>
+            </footer>
+          </section>
+        </div>
+      </div>
 
-    <p class="lbl">设置页 options.html</p>
-    <iframe src="../src/options/options.html?v=o1" height="560"></iframe>
+      <div>
+        <p class="harness-label">工具键三种状态</p>
+        <div style="width: 300px; padding: 12px; background: var(--panel-bg);
+                    border: 1px solid var(--border); border-radius: var(--radius-md);">
+          <div class="composer-actions">
+            <div class="composer-tools">
+              <button class="composer-tool" type="button">🌐</button>
+              <button class="composer-tool voice-button recording" type="button">🎙</button>
+              <button class="composer-tool armed" type="button">确认清空</button>
+            </div>
+            <button id="x" type="button" class="stop-button">停止</button>
+          </div>
+        </div>
 
-    <p class="lbl">弹窗 popup.html</p>
-    <iframe src="../src/popup/popup.html?v=p1" height="320" style="width: 380px;"></iframe>
+        <p class="harness-label" style="margin-top:18px">顶栏一栏放齐</p>
+        <header class="topbar" style="width: 620px;">
+          <div class="title-zone"><h1>雁丘词</h1></div>
+          <nav class="toolbar">
+            <button type="button">打开 PDF</button>
+            <div class="pdf-zoom-controls">
+              <button type="button" class="secondary zoom-button">-</button>
+              <button type="button" class="secondary zoom-reset-button"><span>100%</span></button>
+              <button type="button" class="secondary zoom-button">+</button>
+            </div>
+            <button type="button" class="secondary knowledge-button">知识图谱</button>
+            <button type="button" class="secondary">设置</button>
+          </nav>
+        </header>
+      </div>
+    </div>
+
+    <p class="harness-label" style="margin-top:20px">知识图谱页（顶栏应只剩标题 + 状态）</p>
+    <iframe src="../src/knowledge/knowledge.html?v=k9" style="width:100%;height:420px;border:1px solid var(--border)"></iframe>
   </body>
 </html>
