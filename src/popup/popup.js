@@ -8,6 +8,18 @@ import {
 
 const PDF_REQUIRED_MESSAGE = "当前标签页不是可直接读取的 PDF；也可以点击“选择本地 PDF”导入。";
 
+/*
+ * 在 StepRead 自己的页面上打开这个菜单时，以前会把 chrome-extension:// 的
+ * 内部地址整条显示出来，还告诉读者「当前标签页不是可直接读取的 PDF」——
+ * 说的是实话，但读者要的不是这句。这里认出自家页面，给个名字和下一步。
+ */
+const EXTENSION_BASE_URL = globalThis.chrome?.runtime?.getURL?.("") || "";
+const STEPREAD_PAGE_TITLES = [
+  ["src/reader/reader.html", "StepRead 阅读器"],
+  ["src/knowledge/knowledge.html", "StepRead 知识图谱"],
+  ["src/options/options.html", "StepRead 设置"]
+];
+
 let activeTab = null;
 let localImportInProgress = false;
 
@@ -108,8 +120,17 @@ function renderCurrentUrl(url) {
     return;
   }
 
+  const stepReadPageTitle = describeStepReadPage(url);
+  if (stepReadPageTitle) {
+    currentUrl.textContent = stepReadPageTitle;
+    currentUrl.title = url;
+    openReaderButton.disabled = true;
+    status.textContent = "你已经在 StepRead 里了。要读新的 PDF，点“选择本地 PDF”，或切到 PDF 标签页再打开这个菜单。";
+    return;
+  }
+
   if (!isLikelyPdfSourceUrl(url)) {
-    currentUrl.textContent = url;
+    currentUrl.textContent = shortenUrlForDisplay(url);
     currentUrl.title = url;
     openReaderButton.disabled = true;
     status.textContent = PDF_REQUIRED_MESSAGE;
@@ -121,6 +142,30 @@ function renderCurrentUrl(url) {
   currentUrl.title = sourceInfo.rawSourceUrl || url;
   openReaderButton.disabled = false;
   status.textContent = "当前 PDF 将在 StepRead 阅读器中打开。";
+}
+
+function describeStepReadPage(url) {
+  if (!EXTENSION_BASE_URL || !url.startsWith(EXTENSION_BASE_URL)) {
+    return "";
+  }
+  const path = url.slice(EXTENSION_BASE_URL.length);
+  const match = STEPREAD_PAGE_TITLES.find(([prefix]) => path.startsWith(prefix));
+  return match ? match[1] : "StepRead 页面";
+}
+
+/* 弹窗只有一栏宽：带一长串查询参数的地址会把这块撑成一团 */
+function shortenUrlForDisplay(url) {
+  let shown = url;
+  try {
+    const parsed = new URL(url);
+    // about:blank / data: 这类没有 host，截掉协议只会更难认，原样显示
+    if (parsed.host) {
+      shown = parsed.host + (parsed.pathname === "/" ? "" : parsed.pathname);
+    }
+  } catch {
+    // 解析不了就原样显示
+  }
+  return shown.length > 72 ? `${shown.slice(0, 71)}…` : shown;
 }
 
 function createReaderPath(sourceUrl) {

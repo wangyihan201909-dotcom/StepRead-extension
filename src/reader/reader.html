@@ -39,10 +39,14 @@
               <button id="tocTab" class="sidebar-tab" type="button" role="tab" aria-selected="false" aria-controls="tocPanel" data-sidebar-tab="toc">
                 <span>目录</span>
               </button>
+              <button id="topicsTab" class="sidebar-tab" type="button" role="tab" aria-selected="false" aria-controls="topicsPanel" data-sidebar-tab="topics">
+                <span>话题</span>
+              </button>
             </div>
-            <!-- 同一个位置：文档页放添加文件，目录页放章节数，两边都不留空槽 -->
+            <!-- 同一个位置：文档页放添加文件，目录页放章节数，话题页放新建话题 -->
             <button id="addDocumentButton" class="secondary icon-add-button" type="button" title="添加新文件（右键新建文件夹）" aria-label="添加新文件">+</button>
             <small id="tocCount" class="sidebar-tab-count" hidden>0</small>
+            <button id="newTopicButton" class="secondary icon-add-button" type="button" title="开一个新话题" aria-label="开一个新话题">+</button>
           </div>
 
           <section id="documentsPanel" class="sidebar-panel" role="tabpanel" aria-labelledby="documentsTab">
@@ -83,6 +87,15 @@
             </div>
 
             <ol id="tocList" class="toc-list"></ol>
+          </section>
+
+          <!--
+            话题：一个话题就是一条独立的对话路径。切换话题时对话栏整条换掉，
+            新建话题则从空白开始长出新的一条。划线仍然挂在具体某一轮上。
+          -->
+          <section id="topicsPanel" class="sidebar-panel" role="tabpanel" aria-labelledby="topicsTab" hidden>
+            <p class="section-help">每个话题是一条独立的对话路径。同一个话题里可以先划 A 段问、再划 B 段追问。</p>
+            <div id="topicList" class="topic-list"></div>
           </section>
         </aside>
 

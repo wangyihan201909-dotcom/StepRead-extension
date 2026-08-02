@@ -14,9 +14,19 @@ const STORE_DEFINITIONS = {
     ["by_blockId", "blockId", { unique: false }],
     ["by_threadId", "threadId", { unique: false }]
   ],
+  /*
+   * 话题：一个文档下可以有多个话题，每个话题是一条独立的对话路径。
+   * thread 仍然是存储单位（划线问答、知识图谱都按 thread 走），
+   * 话题在它上面多一层，thread.topicId 指回来。
+   */
+  topics: [
+    ["by_documentId", "documentId", { unique: false }],
+    ["by_updatedAt", "updatedAt", { unique: false }]
+  ],
   threads: [
     ["by_documentId", "documentId", { unique: false }],
     ["by_highlightId", "highlightId", { unique: false }],
+    ["by_topicId", "topicId", { unique: false }],
     ["by_updatedAt", "updatedAt", { unique: false }]
   ],
   messages: [
@@ -276,10 +286,11 @@ export async function deleteDocumentReadingHistory(documentId) {
   const db = await openReaderDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(
-      ["highlights", "threads", "messages", "summaries", "aiRuns", ...GRAPH_STORE_NAMES],
+      ["highlights", "topics", "threads", "messages", "summaries", "aiRuns", ...GRAPH_STORE_NAMES],
       "readwrite"
     );
     const highlightStore = tx.objectStore("highlights");
+    const topicStore = tx.objectStore("topics");
     const threadStore = tx.objectStore("threads");
     const messageStore = tx.objectStore("messages");
     const summaryStore = tx.objectStore("summaries");
@@ -287,6 +298,7 @@ export async function deleteDocumentReadingHistory(documentId) {
     const summary = {
       documentId,
       highlights: 0,
+      topics: 0,
       threads: 0,
       messages: 0,
       summaries: 0,
@@ -299,6 +311,9 @@ export async function deleteDocumentReadingHistory(documentId) {
     deleteGraphRecordsByDocument(tx, documentId, summary);
     deleteKeysByIndex(highlightStore, "by_documentId", documentId, (count) => {
       summary.highlights = count;
+    });
+    deleteKeysByIndex(topicStore, "by_documentId", documentId, (count) => {
+      summary.topics = count;
     });
 
     const threadsRequest = threadStore.index("by_documentId").getAll(documentId);
@@ -472,12 +487,23 @@ export async function deleteDocumentCascade(documentId) {
   const db = await openReaderDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(
-      ["documents", "blocks", "highlights", "threads", "messages", "summaries", "aiRuns", ...GRAPH_STORE_NAMES],
+      [
+        "documents",
+        "blocks",
+        "highlights",
+        "topics",
+        "threads",
+        "messages",
+        "summaries",
+        "aiRuns",
+        ...GRAPH_STORE_NAMES
+      ],
       "readwrite"
     );
     const documentStore = tx.objectStore("documents");
     const blockStore = tx.objectStore("blocks");
     const highlightStore = tx.objectStore("highlights");
+    const topicStore = tx.objectStore("topics");
     const threadStore = tx.objectStore("threads");
     const messageStore = tx.objectStore("messages");
     const summaryStore = tx.objectStore("summaries");
@@ -487,6 +513,7 @@ export async function deleteDocumentCascade(documentId) {
       deleted: false,
       blocks: 0,
       highlights: 0,
+      topics: 0,
       threads: 0,
       messages: 0,
       summaries: 0,
@@ -510,6 +537,9 @@ export async function deleteDocumentCascade(documentId) {
       });
       deleteKeysByIndex(highlightStore, "by_documentId", documentId, (count) => {
         summary.highlights = count;
+      });
+      deleteKeysByIndex(topicStore, "by_documentId", documentId, (count) => {
+        summary.topics = count;
       });
       deleteKeysByIndex(summaryStore, "by_documentId", documentId, (count) => {
         summary.summaries += count;
