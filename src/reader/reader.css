@@ -484,7 +484,8 @@ textarea {
 .sidebar-collapse-button {
   position: absolute;
   top: 50%;
-  left: 50%;
+  /* 骑在侧边栏的右边框上（分隔条的左沿），而不是浮在分隔条正中 */
+  left: 0;
   width: 15px;
   min-height: 46px;
   padding: 0;
