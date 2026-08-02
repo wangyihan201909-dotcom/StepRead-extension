@@ -119,7 +119,6 @@ const elements = {
   workspace: document.querySelector("#workspace"),
   documentTitle: document.querySelector("#documentTitle"),
   sourceUrl: document.querySelector("#sourceUrl"),
-  importPdfButton: document.querySelector("#importPdfButton"),
   pdfZoomOutButton: document.querySelector("#pdfZoomOutButton"),
   pdfZoomResetButton: document.querySelector("#pdfZoomResetButton"),
   pdfZoomInButton: document.querySelector("#pdfZoomInButton"),
@@ -127,7 +126,7 @@ const elements = {
   pdfFileInput: document.querySelector("#pdfFileInput"),
   openOptionsButton: document.querySelector("#openOptionsButton"),
   sidebarHead: document.querySelector("#sidebarHead"),
-  newFolderButton: document.querySelector("#newFolderButton"),
+  addDocumentButton: document.querySelector("#addDocumentButton"),
   folderCreateRow: document.querySelector("#folderCreateRow"),
   folderNameInput: document.querySelector("#folderNameInput"),
   confirmFolderButton: document.querySelector("#confirmFolderButton"),
@@ -146,7 +145,6 @@ const elements = {
   leftResizer: document.querySelector("#leftResizer"),
   rightResizer: document.querySelector("#rightResizer"),
   sidebarCollapseButton: document.querySelector("#sidebarCollapseButton"),
-  qaPanelTitle: document.querySelector("#qaPanelTitle"),
   detailLayer: document.querySelector("#detailLayer"),
   knowledgeButton: document.querySelector("#knowledgeButton"),
   clearConversationButton: document.querySelector("#clearConversationButton"),
@@ -387,9 +385,20 @@ function formatClearSummary(summary) {
 }
 
 function bindEvents() {
-  elements.importPdfButton?.addEventListener("click", async () => {
+  // ＋ 现在就是「添加新文件」；新建文件夹退到右键，属于低频操作
+  elements.addDocumentButton?.addEventListener("click", async () => {
     await discardUnsubmittedDraft({ clearSelection: true, render: true });
     openPdfFilePicker();
+  });
+  elements.addDocumentButton?.addEventListener("contextmenu", (event) =>
+    showDocumentContextMenu(event, { type: "sidebar" })
+  );
+  // 列表空白处右键也给同一个菜单：只在 ＋ 上才有的话没人找得到
+  elements.documentsPanel?.addEventListener("contextmenu", (event) => {
+    if (event.target.closest(".folder-heading, .document-item, .thread-item")) {
+      return;
+    }
+    showDocumentContextMenu(event, { type: "sidebar" });
   });
   elements.pdfFileInput?.addEventListener("change", async (event) => {
     await discardUnsubmittedDraft({ clearSelection: true, render: true });
@@ -405,7 +414,6 @@ function bindEvents() {
       : "src/options/options.html";
     await openOrFocusExtensionPage(optionsPath);
   });
-  elements.newFolderButton.addEventListener("click", showFolderCreator);
   elements.confirmFolderButton.addEventListener("click", createDocumentFolder);
   elements.cancelFolderButton.addEventListener("click", hideFolderCreator);
   elements.folderNameInput.addEventListener("keydown", handleFolderNameKeydown);
@@ -2344,8 +2352,8 @@ async function importPdfFromFile(file, options = {}) {
 
 function setPdfImportBusy(isBusy) {
   pdfImportInProgress = Boolean(isBusy);
-  if (elements.importPdfButton) {
-    elements.importPdfButton.disabled = pdfImportInProgress;
+  if (elements.addDocumentButton) {
+    elements.addDocumentButton.disabled = pdfImportInProgress;
   }
 }
 
@@ -4721,7 +4729,7 @@ function clearDocumentLoadClickTimer() {
 
 function showFolderCreator() {
   elements.folderCreateRow.hidden = false;
-  elements.newFolderButton.hidden = true;
+  elements.addDocumentButton.hidden = true;
   elements.folderNameInput.value = "新建文件夹";
   elements.folderNameInput.focus();
   elements.folderNameInput.select();
@@ -4729,7 +4737,7 @@ function showFolderCreator() {
 
 function hideFolderCreator() {
   elements.folderCreateRow.hidden = true;
-  elements.newFolderButton.hidden = false;
+  elements.addDocumentButton.hidden = false;
   elements.folderNameInput.value = "";
   setFolderCreatorBusy(false);
 }
@@ -5106,8 +5114,17 @@ function showDocumentContextMenu(event, target) {
 
   for (const button of elements.documentContextMenu.querySelectorAll("button")) {
     const action = button.dataset.action;
+    // 侧边栏空白处或 ＋ 上右键：这里没有具体条目，只提供新建文件夹
+    if (target.type === "sidebar") {
+      button.hidden = action !== "new-folder";
+      continue;
+    }
     if (target.type === "thread") {
       button.hidden = action !== "delete";
+      continue;
+    }
+    if (action === "new-folder") {
+      button.hidden = true;
       continue;
     }
     button.hidden = target.trashed ? action !== "restore" : action === "restore";
@@ -5137,6 +5154,12 @@ async function handleContextMenuAction(event) {
   event.stopPropagation();
   const target = contextMenuTarget;
   hideDocumentContextMenu();
+
+  if (action === "new-folder") {
+    setSidebarTab("documents");
+    showFolderCreator();
+    return;
+  }
 
   if (action === "rename") {
     if (target.type === "thread") {
@@ -5996,8 +6019,7 @@ function renderPathRail() {
 
   inner.querySelectorAll(".rail-dot, .fork-badge").forEach((node) => node.remove());
   const tree = state.roundTree;
-  // 一轮都没有时整条路径栏收掉：空栏上挂个展开按钮，点开也只有空画布
-  elements.detailBody?.classList.toggle("rail-empty", !tree?.rounds?.length);
+  // 路径栏常驻：没有对话也把这块地方留着，不然一提问版面就跳一下
   if (!tree?.rounds?.length) {
     elements.pathRailLinks.innerHTML = "";
     inner.style.height = "0px";

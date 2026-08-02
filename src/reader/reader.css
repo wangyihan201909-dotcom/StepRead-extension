@@ -615,7 +615,8 @@ textarea {
 
 .qa-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  /* 去掉标题栏之后只剩正文一行 */
+  grid-template-rows: minmax(0, 1fr);
   border-left: 1px solid var(--border);
   overflow: hidden;
   box-shadow: none;
@@ -696,35 +697,7 @@ textarea {
   overflow-x: hidden;
 }
 
-/* 改成 flex：按钮增减不再受固定列数约束（原来是三列栅格） */
-.qa-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: -2px 0 14px;
-}
-
-/* 清空对话：待确认状态要明显到不可能误点 */
-.qa-header button.armed {
-  width: auto;
-  padding: 0 9px;
-  border-color: #b42318;
-  background: #b42318;
-  color: #ffffff;
-  font-size: var(--app-xs-font-size);
-}
-
-.qa-header h2 {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.qa-header button {
-  flex: 0 0 auto;
-}
+/* .qa-header 整条去掉了：工具按钮在输入框旁，待确认样式见 .composer-tool.armed */
 
 .knowledge-button {
   min-width: 96px;
@@ -2167,15 +2140,7 @@ figcaption {
   min-height: 0;
 }
 
-/* 还没有任何一轮对话：路径栏没有内容可画，整列让给正文 */
-.detail-body.rail-empty {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0;
-}
-
-.detail-body.rail-empty .path-rail {
-  display: none;
-}
+/* 路径栏常驻，包括还没有任何一轮对话的时候：位置固定，提问后版面不跳 */
 
 .path-rail {
   display: flex;
