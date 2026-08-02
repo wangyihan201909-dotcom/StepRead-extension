@@ -108,6 +108,7 @@ const elements = {
   pdfZoomValue: document.querySelector("#pdfZoomValue"),
   pdfFileInput: document.querySelector("#pdfFileInput"),
   openOptionsButton: document.querySelector("#openOptionsButton"),
+  sidebarHead: document.querySelector("#sidebarHead"),
   newFolderButton: document.querySelector("#newFolderButton"),
   folderCreateRow: document.querySelector("#folderCreateRow"),
   folderNameInput: document.querySelector("#folderNameInput"),
@@ -7483,6 +7484,8 @@ function setSidebarTab(tab) {
   elements.tocTab.setAttribute("aria-selected", String(showToc));
   elements.documentsPanel.toggleAttribute("hidden", showToc);
   elements.tocPanel.toggleAttribute("hidden", !showToc);
+  // 用 class 而不是 hidden：hidden 由新建文件夹的开合流程管着，两边会互相覆盖
+  elements.sidebarHead?.classList.toggle("toc-active", showToc);
 }
 
 function handleSidebarTabKeydown(event) {

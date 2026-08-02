@@ -289,10 +289,22 @@ h1 {
   line-height: 1.45;
 }
 
-.document-actions {
+.sidebar-head {
+  flex: 0 0 auto;
   display: flex;
-  justify-content: flex-end;
-  margin: 0 0 6px;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.sidebar-head .sidebar-tabs {
+  flex: 1 1 auto;
+  margin-bottom: 0;
+}
+
+/* 目录页没有文件夹可建，这个入口就不该出现 */
+.sidebar-head.toc-active .icon-add-button {
+  display: none;
 }
 
 .icon-add-button {

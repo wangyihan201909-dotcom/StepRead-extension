@@ -30,20 +30,21 @@
 
       <section id="workspace" class="workspace">
         <aside class="sidebar" aria-label="文档和目录">
-          <div class="sidebar-tabs" role="tablist" aria-label="侧边栏内容切换">
-            <button id="documentsTab" class="sidebar-tab" type="button" role="tab" aria-selected="true" aria-controls="documentsPanel" data-sidebar-tab="documents">
-              <span>文档</span>
-            </button>
-            <button id="tocTab" class="sidebar-tab" type="button" role="tab" aria-selected="false" aria-controls="tocPanel" data-sidebar-tab="toc">
-              <span>目录</span>
-              <small id="tocCount" class="sidebar-tab-count" hidden>0</small>
-            </button>
+          <!-- 新建文件夹并进这一行：它单独占一行时只是一个没有出处的加号 -->
+          <div id="sidebarHead" class="sidebar-head">
+            <div class="sidebar-tabs" role="tablist" aria-label="侧边栏内容切换">
+              <button id="documentsTab" class="sidebar-tab" type="button" role="tab" aria-selected="true" aria-controls="documentsPanel" data-sidebar-tab="documents">
+                <span>文档</span>
+              </button>
+              <button id="tocTab" class="sidebar-tab" type="button" role="tab" aria-selected="false" aria-controls="tocPanel" data-sidebar-tab="toc">
+                <span>目录</span>
+                <small id="tocCount" class="sidebar-tab-count" hidden>0</small>
+              </button>
+            </div>
+            <button id="newFolderButton" class="secondary icon-add-button" type="button" title="新建文件夹" aria-label="新建文件夹">+</button>
           </div>
 
           <section id="documentsPanel" class="sidebar-panel" role="tabpanel" aria-labelledby="documentsTab">
-            <div class="document-actions">
-              <button id="newFolderButton" class="secondary icon-add-button" type="button" title="新建文件夹" aria-label="新建文件夹">+</button>
-            </div>
             <div id="folderCreateRow" class="folder-create-row" hidden>
               <input id="folderNameInput" type="text" placeholder="文件夹名称" autocomplete="off">
               <button id="confirmFolderButton" class="icon-mini-button" type="button" title="确定" aria-label="确定">✓</button>
