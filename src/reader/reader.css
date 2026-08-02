@@ -302,9 +302,17 @@ h1 {
   margin-bottom: 0;
 }
 
-/* 目录页没有文件夹可建，这个入口就不该出现 */
-.sidebar-head.toc-active .icon-add-button {
+/* 右端这一格两页共用：文档页是新建文件夹，目录页是章节数 */
+.sidebar-head.toc-active .icon-add-button,
+.sidebar-head:not(.toc-active) .sidebar-tab-count {
   display: none;
+}
+
+.sidebar-head .sidebar-tab-count {
+  flex: 0 0 auto;
+  min-width: 24px;
+  text-align: center;
+  line-height: 24px;
 }
 
 .icon-add-button {
