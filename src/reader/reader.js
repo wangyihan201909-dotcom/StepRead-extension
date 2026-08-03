@@ -2911,11 +2911,30 @@ async function extractPdfTextLayer(bytes) {
         normalizeWhitespace: true,
         disableCombineTextItems: false
       });
-      const parsedPage = parsePdfPageTextContent(textContent, pageNumber);
+      /*
+       * scale 1 的视口带着页面的 /Rotate，文本坐标要经它才是阅读方向。
+       * 必须走 getPdfViewport：随包的 pdf.js 是 1.10，getViewport({scale})
+       * 不报错但整个视口是 NaN，坐标会被悄悄算废。
+       */
+      const viewport = getPdfViewport(page, 1);
+      const parsedPage = parsePdfPageTextContent(textContent, pageNumber, viewport);
       pages.push(parsedPage);
       textLength += parsedPage.lines.reduce((total, line) => total + line.text.length, 0);
       textItemCount += parsedPage.textItemCount;
       page.cleanup?.();
+    }
+
+    const removedRunningHeads = stripPdfRunningHeads(pages);
+    if (removedRunningHeads) {
+      await logTask("pdf.runningHeads.stripped", {
+        pageCount: pdf.numPages,
+        removedLines: removedRunningHeads
+      });
+      // 剥掉页眉页脚后正文变短了，字数统计得跟着走，否则会误判成扫描件
+      textLength = pages.reduce(
+        (total, page) => total + page.lines.reduce((sum, line) => sum + line.text.length, 0),
+        0
+      );
     }
 
     return {
@@ -2924,7 +2943,8 @@ async function extractPdfTextLayer(bytes) {
       pages,
       outline,
       textItemCount,
-      textLength
+      textLength,
+      removedRunningHeads
     };
   } finally {
     await Promise.resolve(loadingTask.destroy?.()).catch(() => {});
@@ -3130,9 +3150,10 @@ function serializePdfOutlineDestinationPart(part, index) {
   return null;
 }
 
-function parsePdfPageTextContent(textContent, pageNumber) {
+function parsePdfPageTextContent(textContent, pageNumber, viewport) {
+  const util = getPdfJsLib().Util;
   const fragments = (textContent?.items || [])
-    .map((item, index) => normalizePdfTextItem(item, index))
+    .map((item, index) => normalizePdfTextItem(item, index, viewport, util))
     .filter((item) => item.text);
   const lines = buildPdfLines(fragments);
   const metrics = getPdfPageMetrics(lines);
@@ -3140,23 +3161,37 @@ function parsePdfPageTextContent(textContent, pageNumber) {
     pageNumber,
     lines,
     metrics,
-    textItemCount: fragments.length
+    textItemCount: fragments.length,
+    pageWidth: Math.max(0, finiteNumber(viewport?.width, 0)),
+    pageHeight: Math.max(0, finiteNumber(viewport?.height, 0))
   };
 }
 
-function normalizePdfTextItem(item, index) {
+function normalizePdfTextItem(item, index, viewport, util) {
   const text = normalizeImportedText(item?.str || "");
   if (!text) {
     return { text: "" };
   }
 
-  const transform = Array.isArray(item?.transform) ? item.transform : [];
+  const itemTransform = Array.isArray(item?.transform) ? item.transform : [];
+  /*
+   * 页面带 /Rotate 时，item.transform 里的坐标还是未旋转的那套，
+   * 直接拿来排版会把横向页的 x/y 读反，整页行序就乱了。
+   * 先经视口变换映射到实际阅读方向，再谈分行。
+   */
+  const mapped =
+    util?.transform && isValidPdfViewport(viewport) && Array.isArray(viewport.transform) && itemTransform.length >= 6
+      ? util.transform(viewport.transform, itemTransform)
+      : null;
+  // 映射结果只要有一个不是有限数就退回原坐标：宁可不转，也不能算出 NaN 悄悄毁掉分行
+  const transform = mapped && mapped.every((value) => Number.isFinite(value)) ? mapped : itemTransform;
   const x = finiteNumber(transform[4], 0);
   const y = finiteNumber(transform[5], 0);
   const width = Math.max(0, finiteNumber(item?.width, 0));
   const fontSize = Math.max(
     1,
-    Math.abs(finiteNumber(transform[3], 0)) ||
+    Math.hypot(finiteNumber(transform[2], 0), finiteNumber(transform[3], 0)) ||
+      Math.abs(finiteNumber(transform[3], 0)) ||
       Math.abs(finiteNumber(transform[0], 0)) ||
       finiteNumber(item?.height, 0) ||
       10
@@ -3171,6 +3206,94 @@ function normalizePdfTextItem(item, index) {
     fontSize,
     hasEOL: Boolean(item?.hasEOL)
   };
+}
+
+/*
+ * 页眉、页脚、页码：它们在每一页的同一位置重复出现，以前会被当成正文块导入，
+ * 于是书名和页码混进正文、混进目录，也跟着每一轮提问发给模型。
+ *
+ * 判据是「位置固定 + 反复出现」，不是「像页眉」：只看上下边缘那一条带里的短行，
+ * 把其中的数字抹掉再比对（这样「第 12 页」和「第 13 页」算同一条），
+ * 出现在半数以上页面才删。页数太少时不做 —— 那时重复不足以说明问题。
+ */
+const PDF_RUNNING_HEAD_BAND_RATIO = 0.1;
+const PDF_RUNNING_HEAD_MAX_CHARS = 80;
+const PDF_RUNNING_HEAD_MIN_PAGES = 4;
+
+function stripPdfRunningHeads(pages) {
+  if (!Array.isArray(pages) || pages.length < PDF_RUNNING_HEAD_MIN_PAGES) {
+    return 0;
+  }
+
+  const pagesByKey = new Map();
+  for (const page of pages) {
+    for (const key of collectPdfRunningHeadKeys(page)) {
+      if (!pagesByKey.has(key)) {
+        pagesByKey.set(key, new Set());
+      }
+      pagesByKey.get(key).add(page.pageNumber);
+    }
+  }
+
+  const threshold = Math.max(3, Math.ceil(pages.length * 0.5));
+  const repeated = new Set(
+    [...pagesByKey.entries()].filter(([, pageNumbers]) => pageNumbers.size >= threshold).map(([key]) => key)
+  );
+  if (!repeated.size) {
+    return 0;
+  }
+
+  let removed = 0;
+  for (const page of pages) {
+    const kept = page.lines.filter((line) => {
+      const key = createPdfRunningHeadKey(page, line);
+      return !key || !repeated.has(key);
+    });
+    if (kept.length !== page.lines.length) {
+      removed += page.lines.length - kept.length;
+      page.lines = kept;
+      // 去掉页眉页脚后正文的字号和左边界才准，重算一次
+      page.metrics = getPdfPageMetrics(kept);
+    }
+  }
+  return removed;
+}
+
+function collectPdfRunningHeadKeys(page) {
+  const keys = [];
+  for (const line of page.lines || []) {
+    const key = createPdfRunningHeadKey(page, line);
+    if (key) {
+      keys.push(key);
+    }
+  }
+  return keys;
+}
+
+function createPdfRunningHeadKey(page, line) {
+  const pageHeight = finiteNumber(page?.pageHeight, 0);
+  if (!pageHeight) {
+    return "";
+  }
+  const text = normalizeImportedText(line?.text || "");
+  if (!text || text.length > PDF_RUNNING_HEAD_MAX_CHARS) {
+    return "";
+  }
+
+  const y = finiteNumber(line?.y, -1);
+  if (y < 0) {
+    return "";
+  }
+  const band = pageHeight * PDF_RUNNING_HEAD_BAND_RATIO;
+  const atTop = y <= band;
+  const atBottom = y >= pageHeight - band;
+  if (!atTop && !atBottom) {
+    return "";
+  }
+
+  // 数字抹平：页码逐页变化，抹掉之后同一条页脚才认得出来
+  const masked = text.replace(/\d+/g, "#");
+  return `${atTop ? "top" : "bottom"}:${masked}`;
 }
 
 function buildPdfLines(fragments) {
