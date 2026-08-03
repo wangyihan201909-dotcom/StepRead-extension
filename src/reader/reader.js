@@ -3322,7 +3322,7 @@ function parsePdfPageTextContent(textContent, pageNumber, viewport) {
   const fragments = (textContent?.items || [])
     .map((item, index) => normalizePdfTextItem(item, index, viewport, util))
     .filter((item) => item.text);
-  const lines = buildPdfLines(fragments);
+  const lines = buildPdfLines(orderPdfFragmentsByColumn(fragments, viewport));
   const metrics = getPdfPageMetrics(lines);
   return {
     pageNumber,
@@ -3461,6 +3461,191 @@ function createPdfRunningHeadKey(page, line) {
   // 数字抹平：页码逐页变化，抹掉之后同一条页脚才认得出来
   const masked = text.replace(/\d+/g, "#");
   return `${atTop ? "top" : "bottom"}:${masked}`;
+}
+
+/*
+ * 多栏排版。pdf.js 交回来的 item 是内容流顺序，双栏论文里这个顺序常常在左右
+ * 两栏之间来回跳，直接拼行就是两栏交错，读起来整页都是断的。
+ *
+ * 做法是先看 x 方向的空白：把每个 item 的横向占位投影到一条直方图上，
+ * 中间那条从头空到尾的缝就是栏间距，据此切出栏边界。通栏元素（大标题、
+ * 跨栏的图表说明）会压在缝上，所以允许极少量 item 跨越；它们把页面切成
+ * 上下几段，每段各自分栏，段与段之间保持自上而下。
+ *
+ * 只识别出一栏时原样返回 —— 单栏页面（绝大多数书）走的还是老路径。
+ */
+const PDF_COLUMN_BIN_COUNT = 240;
+const PDF_COLUMN_MIN_GUTTER_RATIO = 0.03;
+const PDF_COLUMN_MIN_FRAGMENTS = 12;
+// 栏缝允许被多大比例的行压过：通栏标题、跨栏图注属于正常，一栏正文不是
+const PDF_COLUMN_SPAN_TOLERANCE_RATIO = 0.25;
+const PDF_COLUMN_MIN_SHARE = 0.12;
+const PDF_COLUMN_MAX_COLUMNS = 4;
+
+function orderPdfFragmentsByColumn(fragments, viewport) {
+  const pageWidth = finiteNumber(viewport?.width, 0);
+  if (pageWidth <= 0 || fragments.length < PDF_COLUMN_MIN_FRAGMENTS) {
+    return fragments;
+  }
+
+  const columns = detectPdfColumns(fragments, pageWidth);
+  if (columns.length < 2) {
+    return fragments;
+  }
+
+  const sorted = [...fragments].sort((a, b) => a.y - b.y || a.x - b.x);
+  const ordered = [];
+  let band = [];
+
+  const flushBand = () => {
+    if (!band.length) {
+      return;
+    }
+    for (let index = 0; index < columns.length; index += 1) {
+      const inColumn = band
+        .filter((fragment) => pdfColumnIndexFor(fragment, columns) === index)
+        .sort((a, b) => a.y - b.y || a.x - b.x);
+      ordered.push(...inColumn);
+    }
+    band = [];
+  };
+
+  for (let i = 0; i < sorted.length; i += 1) {
+    const fragment = sorted[i];
+    if (!isPdfSpanningFragment(fragment, columns)) {
+      band.push(fragment);
+      continue;
+    }
+    // 通栏元素：先把它上面那一段按栏排完，它自己成一行，再从它下面重新分栏
+    flushBand();
+    const run = [fragment];
+    while (i + 1 < sorted.length && isPdfSpanningFragment(sorted[i + 1], columns)) {
+      const next = sorted[i + 1];
+      const tolerance = Math.max(2, Math.max(fragment.fontSize, next.fontSize) * 0.6);
+      if (Math.abs(next.y - fragment.y) > tolerance) {
+        break;
+      }
+      run.push(next);
+      i += 1;
+    }
+    ordered.push(...run.sort((a, b) => a.x - b.x));
+  }
+  flushBand();
+
+  return ordered.length === fragments.length ? ordered : fragments;
+}
+
+function detectPdfColumns(fragments, pageWidth) {
+  const binWidth = pageWidth / PDF_COLUMN_BIN_COUNT;
+  if (!(binWidth > 0)) {
+    return [];
+  }
+
+  /*
+   * 按「有多少行压过这个位置」算占用，而不是「有多少个 item」。
+   * 数 item 的话，一个通栏标题就足以让栏缝看起来是有内容的；
+   * 数行则是尺度无关的：正文栏被几十行盖住，栏缝只被那一两行通栏元素盖住。
+   */
+  const rowsByBin = Array.from({ length: PDF_COLUMN_BIN_COUNT }, () => new Set());
+  for (const fragment of fragments) {
+    const row = Math.round(fragment.y / Math.max(4, fragment.fontSize * 0.8));
+    const from = Math.max(0, Math.floor(fragment.x / binWidth));
+    const to = Math.min(
+      PDF_COLUMN_BIN_COUNT - 1,
+      Math.floor((fragment.x + Math.max(fragment.width, binWidth)) / binWidth)
+    );
+    for (let index = from; index <= to; index += 1) {
+      rowsByBin[index].add(row);
+    }
+  }
+  const bins = rowsByBin.map((rows) => rows.size);
+
+  const first = bins.findIndex((count) => count > 0);
+  let last = -1;
+  for (let index = bins.length - 1; index >= 0; index -= 1) {
+    if (bins[index] > 0) {
+      last = index;
+      break;
+    }
+  }
+  if (first < 0 || last <= first) {
+    return [];
+  }
+
+  // 允许极少量通栏元素压在缝上，否则一个大标题就能把栏缝填掉
+  const peakRows = Math.max(...bins);
+  const spanTolerance = Math.floor(peakRows * PDF_COLUMN_SPAN_TOLERANCE_RATIO);
+  const minGutterBins = Math.max(2, Math.round(PDF_COLUMN_BIN_COUNT * PDF_COLUMN_MIN_GUTTER_RATIO));
+  const columns = [];
+  let start = first;
+  let gutterFrom = -1;
+
+  for (let index = first; index <= last + 1; index += 1) {
+    const isGutter = index <= last && bins[index] <= spanTolerance;
+    if (isGutter) {
+      if (gutterFrom < 0) {
+        gutterFrom = index;
+      }
+      continue;
+    }
+    if (gutterFrom >= 0 && index - gutterFrom >= minGutterBins) {
+      columns.push({ start: start * binWidth, end: gutterFrom * binWidth });
+      start = index;
+    }
+    gutterFrom = -1;
+  }
+  columns.push({ start: start * binWidth, end: (last + 1) * binWidth });
+
+  if (columns.length < 2 || columns.length > PDF_COLUMN_MAX_COLUMNS) {
+    return [];
+  }
+
+  /*
+   * 每栏都得有像样的内容量。零星几个 item 的那种「栏」多半是页边的行号、
+   * 批注，或者右边那截参差不齐的行尾 —— 后者尤其常见，短行收尾处覆盖率低，
+   * 看起来就像又一条缝。把这些碎片剔掉即可：pdfColumnIndexFor 会把落在
+   * 其中的 item 归给最近的一栏，不会丢内容。剔完仍有两栏才算分栏。
+   */
+  const minShare = Math.max(1, Math.floor(fragments.length * PDF_COLUMN_MIN_SHARE));
+  const counts = new Array(columns.length).fill(0);
+  for (const fragment of fragments) {
+    counts[pdfColumnIndexFor(fragment, columns)] += 1;
+  }
+  const kept = columns.filter((column, index) => counts[index] >= minShare);
+  return kept.length >= 2 ? kept : [];
+}
+
+function pdfColumnIndexFor(fragment, columns) {
+  const center = fragment.x + fragment.width / 2;
+  let best = 0;
+  let bestDistance = Infinity;
+  for (let index = 0; index < columns.length; index += 1) {
+    const column = columns[index];
+    if (center >= column.start && center <= column.end) {
+      return index;
+    }
+    // 正好落在栏缝里：归给最近的一栏，别丢掉
+    const distance = center < column.start ? column.start - center : center - column.end;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = index;
+    }
+  }
+  return best;
+}
+
+function isPdfSpanningFragment(fragment, columns) {
+  const from = fragment.x;
+  const to = fragment.x + fragment.width;
+  let touched = 0;
+  for (const column of columns) {
+    const overlap = Math.min(to, column.end) - Math.max(from, column.start);
+    const reference = Math.max(1, Math.min(fragment.width, column.end - column.start));
+    if (overlap > reference * 0.3) {
+      touched += 1;
+    }
+  }
+  return touched >= 2;
 }
 
 function buildPdfLines(fragments) {
