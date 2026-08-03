@@ -165,6 +165,25 @@
         </aside>
       </section>
 
+      <!-- 加密 PDF：pdf.js 要密码时弹这个。输入框是 password 类型，不回显 -->
+      <div id="pdfPasswordOverlay" class="pdf-password-overlay" hidden>
+        <form id="pdfPasswordForm" class="pdf-password-dialog">
+          <h2 id="pdfPasswordTitle">这份 PDF 需要密码</h2>
+          <p id="pdfPasswordHint" class="pdf-password-hint">输入打开密码后继续导入。密码只用于解开这份文件，不会被保存。</p>
+          <input
+            id="pdfPasswordInput"
+            type="password"
+            autocomplete="current-password"
+            placeholder="打开密码"
+            aria-labelledby="pdfPasswordTitle"
+          >
+          <div class="pdf-password-actions">
+            <button id="pdfPasswordCancel" class="secondary" type="button">取消导入</button>
+            <button id="pdfPasswordSubmit" type="submit">解锁</button>
+          </div>
+        </form>
+      </div>
+
       <div id="pathCanvasOverlay" class="path-canvas-overlay" hidden>
         <div class="path-canvas-bar">
           <strong>对话路径</strong>

@@ -166,6 +166,11 @@ const elements = {
   tocCount: document.querySelector("#tocCount"),
   topicList: document.querySelector("#topicList"),
   newTopicButton: document.querySelector("#newTopicButton"),
+  pdfPasswordOverlay: document.querySelector("#pdfPasswordOverlay"),
+  pdfPasswordForm: document.querySelector("#pdfPasswordForm"),
+  pdfPasswordInput: document.querySelector("#pdfPasswordInput"),
+  pdfPasswordHint: document.querySelector("#pdfPasswordHint"),
+  pdfPasswordCancel: document.querySelector("#pdfPasswordCancel"),
   selectionChips: document.querySelector("#selectionChips"),
   messageList: document.querySelector("#messageList"),
   composer: document.querySelector(".composer"),
@@ -412,8 +417,14 @@ function bindEvents() {
     showDocumentContextMenu(event, { type: "sidebar" });
   });
   elements.pdfFileInput?.addEventListener("change", async (event) => {
+    /*
+     * 这里必须同步取到 input：事件派发一结束 currentTarget 就被置空，
+     * 而下面那个 await 正好让监听器提前返回。以前把 event 直接传下去，
+     * 于是选完文件永远是「Cannot read properties of null」，静默什么也不发生。
+     */
+    const input = event.currentTarget;
     await discardUnsubmittedDraft({ clearSelection: true, render: true });
-    await handlePdfFileInputChange(event);
+    await handlePdfFileInputChange(input);
   });
   elements.pdfZoomOutButton?.addEventListener("click", () => changePdfViewerZoom(-PDF_VIEWER_ZOOM_STEP));
   elements.pdfZoomInButton?.addEventListener("click", () => changePdfViewerZoom(PDF_VIEWER_ZOOM_STEP));
@@ -441,6 +452,16 @@ function bindEvents() {
   elements.tocTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.topicsTab.addEventListener("keydown", handleSidebarTabKeydown);
   elements.newTopicButton.addEventListener("click", startNewTopic);
+  elements.pdfPasswordForm.addEventListener("submit", handlePdfPasswordSubmit);
+  elements.pdfPasswordCancel.addEventListener("click", () => settlePdfPassword(null));
+  elements.pdfPasswordInput.addEventListener("keydown", (event) => {
+    // Esc 等于取消：不拦的话会冒泡到全局，被别的快捷键接走
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      settlePdfPassword(null);
+    }
+  });
   elements.knowledgeButton.addEventListener("click", openKnowledgePage);
   elements.sectionIndexButton.addEventListener("click", handleSectionIndexButton);
   elements.clearConversationButton.addEventListener("click", handleClearConversation);
@@ -1306,13 +1327,21 @@ async function renderPdfHybridDocument() {
 
   try {
     const pdfjsLib = getPdfJsLib();
+    /*
+     * 原版页面渲染是第二次打开同一份 PDF。加密文件在这里同样要密码 ——
+     * 不带的话会以「No password given」降级成纯文字视图，读者只看到一句
+     * 莫名其妙的渲染失败。导入时用过的密码留在内存里，这里直接复用。
+     */
     loadingTask = pdfjsLib.getDocument({
       data: clonePdfBytes(bytes),
+      password: getPdfSessionPassword(documentRecord?.id),
       disableWorker: !getPdfWorkerSrc(),
       disableFontFace: false,
       isEvalSupported: false,
       useSystemFonts: true
     });
+    // 内存里没有（比如刷新过），就再问一次，而不是直接降级
+    attachPdfPasswordPrompt(loadingTask, pdfjsLib, documentRecord?.id);
     pdfHybridRenderState.loadingTask = loadingTask;
     pdf = await loadingTask.promise;
     if (!isCurrentPdfHybridRender(token)) {
@@ -2565,8 +2594,10 @@ function openPdfFilePicker(options = {}) {
   elements.pdfFileInput.click();
 }
 
-async function handlePdfFileInputChange(event) {
-  const input = event.currentTarget;
+async function handlePdfFileInputChange(input) {
+  if (!input) {
+    return;
+  }
   const file = input.files?.[0];
   const sourceUrl = input.dataset.sourceUrl || "";
   input.dataset.sourceUrl = "";
@@ -2660,7 +2691,16 @@ async function importPdfFromFile(file, options = {}) {
       size: file?.size || 0,
       message: getErrorMessage(error)
     });
-    setStatus("PDF 导入失败：只能读取带可复制文字层的 PDF。扫描版或损坏文件无法导入。");
+    /*
+     * 这里以前写死「只能读取带可复制文字层的 PDF」，加密文件走到这条路时
+     * 等于答非所问 —— 明明是密码没输对，却告诉读者文字层有问题。
+     */
+    // 自己点的取消不是失败，别扣一顶「导入失败」的帽子
+    setStatus(
+      error?.name === "PdfPasswordCancelled"
+        ? `${getPendingImportFailureMessage(error)}。`
+        : `PDF 导入失败：${getPendingImportFailureMessage(error)}。`
+    );
     return false;
   } finally {
     setPdfImportBusy(false);
@@ -2736,6 +2776,10 @@ function getPendingPdfImportFileName(pendingImport) {
 
 function getPendingImportFailureMessage(error) {
   const message = getErrorMessage(error);
+  // 密码相关的失败自己就说清楚了，别被后面那句「文字层」的兜底盖掉
+  if (error?.name === "PdfPasswordCancelled" || error?.name === "PdfPasswordFailed") {
+    return message;
+  }
   if (/text layer is empty|too short|No usable text blocks/i.test(message)) {
     return "只能读取带可复制文字层的 PDF，扫描版或损坏文件无法导入";
   }
@@ -2804,6 +2848,7 @@ async function importPdfBytes({
   const parsed = await extractPdfTextLayer(bytes);
   const documentId = createStablePdfDocumentId(sourceIdentity || sourceUrl || fileName || "local-pdf");
   rememberPdfHybridBytes(documentId, bytes);
+  rememberPdfSessionPassword(documentId, parsed.password);
   const blocks = buildStepReadBlocksFromPdfPages(parsed.pages, documentId, {
     sourceUrl,
     fileName
@@ -2885,6 +2930,110 @@ async function importPdfBytes({
   );
 }
 
+/*
+ * 加密 PDF：pdf.js 会在解析中途回调 onPassword 要密码，而不是直接失败。
+ * 这条路以前没接，于是正版带密码的电子书一律卡在一句泛泛的导入失败上。
+ *
+ * 用 onPassword 而不是「失败后重开一次」：重开要留一份 bytes 的副本，
+ * 大文件白白多占一倍内存，而且 pdf.js 可能已经把 ArrayBuffer 转移给 worker。
+ */
+let pdfPasswordRequest = null;
+
+/*
+ * 解开过的密码只留在内存里，供这一次会话内的二次打开（原版页面渲染）复用。
+ * 不落库、不进设置：刷新之后重新问一次，比把书的密码存在磁盘上要好。
+ */
+const pdfSessionPasswords = new Map();
+
+function getPdfSessionPassword(documentId) {
+  return (documentId && pdfSessionPasswords.get(documentId)) || undefined;
+}
+
+function rememberPdfSessionPassword(documentId, password) {
+  if (documentId && password) {
+    pdfSessionPasswords.set(documentId, password);
+  }
+}
+
+function requestPdfPassword(incorrect) {
+  const overlay = elements.pdfPasswordOverlay;
+  const input = elements.pdfPasswordInput;
+  if (!overlay || !input) {
+    return Promise.resolve(null);
+  }
+
+  closePdfPasswordDialog();
+  elements.pdfPasswordHint.textContent = incorrect
+    ? "密码不对，再试一次。"
+    : "输入打开密码后继续导入。密码只用于解开这份文件，不会被保存。";
+  overlay.hidden = false;
+  input.value = "";
+  input.focus();
+
+  return new Promise((resolve) => {
+    pdfPasswordRequest = resolve;
+  });
+}
+
+function settlePdfPassword(password) {
+  const resolve = pdfPasswordRequest;
+  pdfPasswordRequest = null;
+  closePdfPasswordDialog();
+  if (resolve) {
+    resolve(password);
+  }
+}
+
+function closePdfPasswordDialog() {
+  if (elements.pdfPasswordOverlay) {
+    elements.pdfPasswordOverlay.hidden = true;
+  }
+  if (elements.pdfPasswordInput) {
+    // 别把密码留在 DOM 里
+    elements.pdfPasswordInput.value = "";
+  }
+}
+
+function handlePdfPasswordSubmit(event) {
+  event.preventDefault();
+  const password = elements.pdfPasswordInput?.value || "";
+  if (!password) {
+    elements.pdfPasswordHint.textContent = "请输入密码，或点「取消导入」放弃这份文件。";
+    return;
+  }
+  settlePdfPassword(password);
+}
+
+function attachPdfPasswordPrompt(loadingTask, pdfjsLib, documentId = "") {
+  if (!loadingTask) {
+    return { cancelled: () => false, lastPassword: () => "" };
+  }
+  const responses = pdfjsLib?.PasswordResponses || {};
+  let cancelled = false;
+  let lastPassword = "";
+
+  loadingTask.onPassword = (updatePassword, reason) => {
+    const incorrect = reason === responses.INCORRECT_PASSWORD;
+    void requestPdfPassword(incorrect).then((password) => {
+      if (password === null) {
+        cancelled = true;
+        // destroy 会让 loadingTask.promise 直接拒绝，不用再喂一个假密码去撞墙
+        void Promise.resolve(loadingTask.destroy?.()).catch(() => {});
+        return;
+      }
+      lastPassword = password;
+      rememberPdfSessionPassword(documentId, password);
+      updatePassword(password);
+    });
+  };
+
+  return { cancelled: () => cancelled, lastPassword: () => lastPassword };
+}
+
+function isPdfPasswordError(error) {
+  return error?.name === "PasswordException" || /password/i.test(String(error?.message || ""));
+}
+
 async function extractPdfTextLayer(bytes) {
   const pdfjsLib = getPdfJsLib();
   const loadingTask = pdfjsLib.getDocument({
@@ -2894,10 +3043,26 @@ async function extractPdfTextLayer(bytes) {
     isEvalSupported: false,
     useSystemFonts: true
   });
+  const passwordPrompt = attachPdfPasswordPrompt(loadingTask, pdfjsLib);
   let pdf = null;
 
   try {
-    pdf = await loadingTask.promise;
+    try {
+      pdf = await loadingTask.promise;
+    } catch (error) {
+      if (passwordPrompt.cancelled()) {
+        // 调用方会在后面接「。暂存文件仍保留…」，所以这里不带句号
+        const cancelledError = new Error("已取消导入这份加密 PDF");
+        cancelledError.name = "PdfPasswordCancelled";
+        throw cancelledError;
+      }
+      if (isPdfPasswordError(error)) {
+        const passwordError = new Error("这份 PDF 有密码保护，密码不正确或无法解开");
+        passwordError.name = "PdfPasswordFailed";
+        throw passwordError;
+      }
+      throw error;
+    }
     const metadata = await pdf.getMetadata().catch(() => ({}));
     const outline = await extractPdfOutline(pdf);
     const pages = [];
@@ -2944,7 +3109,9 @@ async function extractPdfTextLayer(bytes) {
       outline,
       textItemCount,
       textLength,
-      removedRunningHeads
+      removedRunningHeads,
+      // documentId 要等抽完文本才算得出来，密码先带回去给调用方登记
+      password: passwordPrompt.lastPassword()
     };
   } finally {
     await Promise.resolve(loadingTask.destroy?.()).catch(() => {});
